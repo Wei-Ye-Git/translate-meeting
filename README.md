@@ -105,7 +105,7 @@ sessions/               本地会议录音、文本和诊断（不纳入仓库�
 
 ### 许可证
 
-本仓库当前未包含项目许可证文件。发布或再分发前，请添加项目许可证，并确认代码、依赖和模型各自的授权条件。
+本项目采用 MIT 许可证，详见 `LICENSE`。模型权重和第三方依赖有各自独立的许可条款；使用或再分发前请查看上游许可证。
 
 ---
 
@@ -209,4 +209,4 @@ sessions/               Local recordings, transcripts, and diagnostics (excluded
 
 ### License
 
-This repository currently does not include a project license file. Before publishing or redistributing it, add a project license and verify the licensing terms for the code, dependencies, and models.
+This project is distributed under the MIT License; see `LICENSE`. Model weights and third-party dependencies have separate license terms. Review their upstream licenses before use or redistribution.

@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.pyc
+run.log
+
+# Local audio, transcripts, model weights, caches, logs, and reports
+sessions/
+models/
+archive/
+fixtures/
+docs/
+tool/
+prompts/
+agents/
+.agents/
+
+# Keep generated session data out of the repository even if paths change
+**/meeting_audio.wav
+**/diagnostics.jsonl
+**/meeting_transcript*.txt
+**/meeting_revisions.jsonl
+*.log
+*.zip
+terminology.json

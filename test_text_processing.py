@@ -18,6 +18,7 @@ from text_processing import (
     is_recordable_sentence,
     is_review_candidate,
     is_asr_anomaly,
+    asr_output_issue,
     has_valid_time_span,
     select_timed_words_for_target,
     select_timed_words_for_correction,
@@ -31,6 +32,24 @@ from text_processing import (
 
 
 class TextProcessingTests(unittest.TestCase):
+    def test_asr_output_issue_flags_implausible_word_rate(self):
+        words = [
+            TimedWord(index * 0.05, index * 0.05 + 0.04, f"word{index}")
+            for index in range(60)
+        ]
+
+        issue = asr_output_issue(words, audio_duration=5.0)
+
+        self.assertEqual(issue, "implausible_word_rate")
+
+    def test_asr_output_issue_keeps_fast_but_plausible_speech(self):
+        words = [
+            TimedWord(index * 0.1, index * 0.1 + 0.08, f"word{index}")
+            for index in range(30)
+        ]
+
+        self.assertIsNone(asr_output_issue(words, audio_duration=5.0))
+
     def test_chunk_overlap_removes_only_duplicate_leading_words(self):
         previous = [
             TimedWord(0.0, 0.2, "we"),

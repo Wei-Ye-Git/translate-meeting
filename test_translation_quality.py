@@ -1,9 +1,38 @@
 import unittest
 
-from translator import translation_quality_issues
+from translator import apply_translation_quality_status, translation_quality_issues
 
 
 class TranslationQualityTests(unittest.TestCase):
+    def test_persistent_translation_quality_issues_are_marked_for_review(self):
+        status = apply_translation_quality_status({"version": 2}, ["missing_numbers"])
+
+        self.assertTrue(status["review"])
+        self.assertTrue(status["translation_review"])
+        self.assertEqual(status["translation_issues"], ["missing_numbers"])
+
+    def test_successful_translation_retry_clears_translation_only_review_state(self):
+        status = apply_translation_quality_status(
+            {
+                "version": 2,
+                "review": True,
+                "translation_review": True,
+                "translation_issues": ["missing_numbers"],
+            },
+            [],
+        )
+
+        self.assertNotIn("review", status)
+        self.assertNotIn("translation_review", status)
+        self.assertNotIn("translation_issues", status)
+
+    def test_successful_translation_keeps_existing_asr_review_marker(self):
+        status = apply_translation_quality_status(
+            {"review": True, "review_reason": "implausible_word_rate"}, []
+        )
+
+        self.assertTrue(status["review"])
+
     class Tokenizer:
         class Batch(dict):
             def to(self, device):

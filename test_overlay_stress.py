@@ -3,6 +3,14 @@ from overlay import Overlay
 
 
 class OverlayStressTests(unittest.TestCase):
+    def test_current_transcript_is_labeled_as_provisional_preview(self):
+        overlay = Overlay(font_size=14)
+        overlay.root.withdraw()
+        try:
+            self.assertEqual(overlay.current_label.cget("text"), "实时预览（内容可能变化）")
+        finally:
+            overlay.close()
+
     def test_overlay_keeps_only_configured_history_window(self):
         overlay = Overlay(font_size=14, max_history_records=2)
         overlay.root.withdraw()

@@ -26,6 +26,7 @@ from model_validation import missing_model_files
 from overlay import Overlay
 from text_processing import (
     TimedWord,
+    asr_output_issue,
     clean_repetitions,
     split_timed_sentences,
     words_to_text,
@@ -94,6 +95,7 @@ def main():
 
     error_queue = queue.Queue()
     audio_gap_count = 0
+    suspect_asr_ranges = []
     capture_stats = {
         "chunks": 0,
         "frames": 0,
@@ -258,6 +260,11 @@ def main():
             previous = records[-1][0] if records else ""
             previous_end = record_metadata[-1]["end"] if record_metadata else None
         current_start = words[0].start if words else 0.0
+        current_end = words[-1].end if words else current_start
+        suspect_asr = any(
+            current_start < suspect_end and current_end > suspect_start
+            for suspect_start, suspect_end in suspect_asr_ranges
+        )
         if previous and previous_end is not None and current_start - previous_end <= 2.0:
             words = remove_sentence_overlap_words(previous, words)
         recognized_text = words_to_text(words)
@@ -284,8 +291,15 @@ def main():
             metadata = {"start": start, "end": end, "version": 1}
             if asr_anomaly:
                 metadata["asr_anomaly"] = True
-            if asr_anomaly or is_review_candidate(original):
+            if asr_anomaly or is_review_candidate(original) or suspect_asr:
                 metadata["review"] = True
+            if suspect_asr:
+                metadata["asr_suspect"] = True
+                metadata["review_reason"] = "implausible_word_rate"
+            elif asr_anomaly:
+                metadata["review_reason"] = "asr_anomaly"
+            elif is_review_candidate(original):
+                metadata["review_reason"] = "short_asr_fragment"
             record_metadata.append(metadata)
             record_contexts.append(meeting_context.recent_sentences(limit=3))
             index = len(records) - 1
@@ -468,6 +482,27 @@ def main():
                 target_end / cfg.samplerate,
                 max_word_seconds=cfg.max_asr_word_duration_seconds,
             )
+            issue = asr_output_issue(
+                timed_words,
+                max(0.0, (target_end - target_start) / cfg.samplerate),
+            )
+            if issue:
+                suspect_asr_ranges.append(
+                    (target_start / cfg.samplerate, target_end / cfg.samplerate)
+                )
+                diagnostics.write_event(
+                    "asr_suspect",
+                    issue=issue,
+                    words=len(timed_words),
+                    target_start=round(target_start / cfg.samplerate, 3),
+                    target_end=round(target_end / cfg.samplerate, 3),
+                )
+                publish_result(
+                    "status",
+                    "检测到异常密集的 ASR 结果，已保留文本并标记待复核",
+                    "",
+                    None,
+                )
             return timed_words, audio, audio_start
 
         def extract_sentence_audio(words):
@@ -738,6 +773,20 @@ def main():
                                 publish_result("status", f"实时预览识别失败，正式识别继续: {error}", "", None)
                                 p_words = []
                             p_text = clean_repetitions(words_to_text(p_words))
+                            preview_issue = asr_output_issue(
+                                p_words, len(preview_audio) / cfg.samplerate
+                            )
+                            if preview_issue:
+                                diagnostics.write_event(
+                                    "asr_suspect",
+                                    stage="preview",
+                                    issue=preview_issue,
+                                    words=len(p_words),
+                                    audio_seconds=round(
+                                        len(preview_audio) / cfg.samplerate, 3
+                                    ),
+                                )
+                                p_text = ""
                             if p_words and not has_valid_time_span(
                                 p_words,
                                 max_word_seconds=cfg.max_asr_word_duration_seconds,
@@ -1210,6 +1259,7 @@ def main():
                             try:
                                 translated = translator.translate(original, quality=True)
                             except Exception as error:
+                                issues.append("translation_retry_failed")
                                 publish_result(
                                     "status",
                                     f"第 {index + 1} 句增强翻译重试失败: {error}",
@@ -1218,6 +1268,19 @@ def main():
                                 )
 
                     remaining_issues = translator.quality_issues(original, translated)
+                    with records_lock:
+                        current_for_quality = (
+                            index < len(records)
+                            and records[index][0] == original
+                            and record_metadata[index]["version"] == metadata["version"]
+                        )
+                        if current_for_quality:
+                            updated_metadata = apply_translation_quality_status(
+                                record_metadata[index], remaining_issues
+                            )
+                            record_metadata[index].clear()
+                            record_metadata[index].update(updated_metadata)
+                            metadata = updated_metadata
                     diagnostics.write_event(
                         "history_translation",
                         index=index,
@@ -1230,6 +1293,14 @@ def main():
                                 record_metadata[index]["review"] = True
                                 metadata["review"] = True
                         publish_result("history_review", index, "", None)
+                    if remaining_issues:
+                        publish_result(
+                            "status",
+                            f"第 {index + 1} 句增强翻译后仍有质量告警，已标记待复核: "
+                            f"{', '.join(remaining_issues)}",
+                            "",
+                            None,
+                        )
 
                     with records_lock:
                         current = (
@@ -1269,6 +1340,14 @@ def main():
                             version=metadata["version"],
                         )
                 except Exception as error:
+                    with records_lock:
+                        if index < len(records):
+                            updated_metadata = apply_translation_quality_status(
+                                record_metadata[index], ["translation_error"]
+                            )
+                            record_metadata[index].clear()
+                            record_metadata[index].update(updated_metadata)
+                    publish_result("history_review", index, "", None)
                     diagnostics.write_event(
                         "translation_error",
                         stage="history",

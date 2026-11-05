@@ -47,6 +47,25 @@ def translation_quality_issues(source, translated):
     return issues
 
 
+def apply_translation_quality_status(metadata, issues):
+    """Return record metadata with persistent translation issues marked for review."""
+    result = dict(metadata or {})
+    if issues:
+        result["review"] = True
+        result["translation_review"] = True
+        result["translation_issues"] = list(issues)
+    else:
+        had_translation_review = result.pop("translation_review", False)
+        result.pop("translation_issues", None)
+        if (
+            had_translation_review
+            and not result.get("asr_anomaly")
+            and not result.get("review_reason")
+        ):
+            result.pop("review", None)
+    return result
+
+
 def can_use_context_translation(texts, translated_parts):
     if not texts or translated_parts and len(texts) != len(translated_parts):
         return False

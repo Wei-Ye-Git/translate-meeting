@@ -106,10 +106,11 @@ class Overlay:
         current = tk.Frame(self.root, bg="#101216", highlightthickness=1,
                            highlightbackground="#303640")
         current.pack(fill="x", padx=self.padding, pady=(0, self.padding))
-        tk.Label(
-            current, text="实时转写", fg="#8994a1", bg="#101216",
+        self.current_label = tk.Label(
+            current, text="实时预览（内容可能变化）", fg="#8994a1", bg="#101216",
             font=("Microsoft YaHei UI", 9), anchor="w",
-        ).pack(fill="x", padx=10, pady=(7, 0))
+        )
+        self.current_label.pack(fill="x", padx=10, pady=(7, 0))
         self.original = tk.Label(
             current, text="", fg="#ffffff", bg="#101216",
             font=("Segoe UI", max(12, font_size - 2)), wraplength=self.wrap - 20,

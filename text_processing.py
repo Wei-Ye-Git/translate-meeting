@@ -193,6 +193,20 @@ def has_valid_time_span(words, max_word_seconds=5.0, max_sentence_seconds=15.0):
     )
 
 
+def asr_output_issue(words, audio_duration, max_words_per_second=8.0):
+    """Flag implausibly dense ASR output before it can enter live history."""
+    if not words:
+        return None
+    if audio_duration <= 0:
+        return "invalid_audio_duration"
+    recognized_words = sum(
+        bool(re.search(r"[A-Za-z0-9]", word.text)) for word in words
+    )
+    if recognized_words / audio_duration > max_words_per_second:
+        return "implausible_word_rate"
+    return None
+
+
 def select_timed_words_for_target(
     words,
     target_start,

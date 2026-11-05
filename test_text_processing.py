@@ -50,6 +50,14 @@ class TextProcessingTests(unittest.TestCase):
 
         self.assertIsNone(asr_output_issue(words, audio_duration=5.0))
 
+    def test_asr_word_rate_uses_speech_span_not_silent_window_padding(self):
+        words = [
+            TimedWord(10.0 + index * 0.05, 10.04 + index * 0.05, f"word{index}")
+            for index in range(20)
+        ]
+
+        self.assertEqual(asr_output_issue(words), "implausible_word_rate")
+
     def test_chunk_overlap_removes_only_duplicate_leading_words(self):
         previous = [
             TimedWord(0.0, 0.2, "we"),
@@ -297,6 +305,9 @@ class TextProcessingTests(unittest.TestCase):
     def test_rejects_single_word_asr_fragment_from_history(self):
         self.assertFalse(is_recordable_sentence("That's"))
         self.assertFalse(is_recordable_sentence("Thank"))
+        self.assertFalse(is_recordable_sentence("AI"))
+        self.assertFalse(is_recordable_sentence("PR"))
+        self.assertFalse(is_recordable_sentence("ticket"))
 
     def test_keeps_short_complete_acknowledgements(self):
         self.assertTrue(is_recordable_sentence("All right."))

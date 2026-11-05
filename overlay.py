@@ -238,10 +238,17 @@ class Overlay:
             old_translation = self.history[index][1]
             self.history[index] = (original, "")
             if metadata:
-                self.history_metadata[index].update(metadata)
-                self.history_metadata[index].setdefault(
-                    "previous_translation", old_translation
-                )
+                previous_original = self.history_metadata[index].get("previous_original")
+                previous_translation = self.history_metadata[index].get("previous_translation")
+                self.history_metadata[index] = dict(metadata)
+                if old_translation and old_translation != "翻译中...":
+                    self.history_metadata[index].setdefault(
+                        "previous_translation", old_translation
+                    )
+                if previous_original:
+                    self.history_metadata[index].setdefault("previous_original", previous_original)
+                if previous_translation:
+                    self.history_metadata[index].setdefault("previous_translation", previous_translation)
         en_tag = f"en_{index}"
         ranges = self.history_text.tag_ranges(en_tag)
         if ranges:

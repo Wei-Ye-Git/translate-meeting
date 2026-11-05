@@ -5,6 +5,20 @@ from terminology import Terminology
 
 
 class MeetingContextTests(unittest.TestCase):
+    def test_asr_review_candidates_are_excluded_from_future_prompt_context(self):
+        from meeting_context import should_add_to_meeting_context
+
+        self.assertFalse(should_add_to_meeting_context({"asr_suspect": True}))
+        self.assertFalse(should_add_to_meeting_context({"asr_anomaly": True}))
+        self.assertFalse(
+            should_add_to_meeting_context({"review_reasons": ["asr_short_fragment"]})
+        )
+        self.assertFalse(
+            should_add_to_meeting_context({"review_reason": "short_asr_fragment"})
+        )
+        self.assertTrue(should_add_to_meeting_context({"translation_review": True}))
+        self.assertTrue(should_add_to_meeting_context({}))
+
     def setUp(self):
         self.terms = Terminology({
             "CPU": {"target": "CPU"},
@@ -37,6 +51,16 @@ class MeetingContextTests(unittest.TestCase):
 
         self.assertIn("update CPU usage", context.snapshot())
         self.assertNotIn("update the viewer", context.snapshot())
+
+    def test_correction_reports_when_source_has_already_left_the_context_window(self):
+        context = MeetingContext(self.terms, max_sentences=1)
+        context.add("First sentence is old.")
+        context.add("Second sentence is recent.")
+
+        replaced = context.replace_recent("First sentence is old.", "Corrected first sentence.")
+
+        self.assertFalse(replaced)
+        self.assertEqual(context.recent_sentences(), ["Second sentence is recent."])
 
     def test_asr_prompt_context_contains_only_recent_transcript_text(self):
         context = MeetingContext(self.terms, max_sentences=4, max_chars=180)

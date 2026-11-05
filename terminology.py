@@ -61,12 +61,13 @@ class Terminology:
             selected.append((term, match_length))
         return [term for term, _ in selected]
 
-    def asr_prompt(self, text, max_terms=30):
+    def asr_prompt(self, text, max_terms=30, include_always=True):
         matched = list(self.matching_terms(text))
         selected = []
-        for term, entry in self.entries.items():
-            if entry.get("asr_always"):
-                selected.append(term)
+        if include_always:
+            for term, entry in self.entries.items():
+                if entry.get("asr_always"):
+                    selected.append(term)
         selected.extend(term for term in matched if term not in selected)
         return ", ".join(selected[:max_terms])
 

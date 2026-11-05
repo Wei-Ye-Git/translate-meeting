@@ -27,3 +27,20 @@ def take_latest(current, pending):
             pending.task_done()
         except queue.Empty:
             return latest
+
+
+def reset_live_translation(state, pending):
+    """Invalidate any in-flight result and discard queued prior-utterance text."""
+    state["revision"] = state.get("revision", 0) + 1
+    state["text"] = ""
+    while True:
+        try:
+            pending.get_nowait()
+            pending.task_done()
+        except queue.Empty:
+            break
+    return state["revision"]
+
+
+def is_live_translation_current(state, revision, text):
+    return state.get("revision") == revision and state.get("text") == text

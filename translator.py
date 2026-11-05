@@ -47,22 +47,89 @@ def translation_quality_issues(source, translated):
     return issues
 
 
-def apply_translation_quality_status(metadata, issues):
-    """Return record metadata with persistent translation issues marked for review."""
+def set_review_reason(metadata, reason):
+    """Add one independent reason for manual review to a record."""
     result = dict(metadata or {})
-    if issues:
+    reasons = list(result.get("review_reasons", []))
+    legacy_reason = result.get("review_reason")
+    if legacy_reason and legacy_reason not in reasons:
+        reasons.append(legacy_reason)
+    if reason not in reasons:
+        reasons.append(reason)
+    result["review_reasons"] = reasons
+    result["review"] = True
+    return result
+
+
+def clear_review_reason(metadata, reason):
+    """Clear one review reason without removing unrelated review requirements."""
+    result = dict(metadata or {})
+    reasons = list(result.get("review_reasons", []))
+    legacy_reason = result.get("review_reason")
+    if legacy_reason and legacy_reason not in reasons:
+        reasons.append(legacy_reason)
+    reasons = [item for item in reasons if item != reason]
+    result.pop("review_reason", None)
+    if reasons:
+        result["review_reasons"] = reasons
         result["review"] = True
+    else:
+        result.pop("review_reasons", None)
+        if not result.get("translation_review") and not result.get("asr_anomaly"):
+            result.pop("review", None)
+    return result
+
+
+def apply_translation_quality_status(metadata, issues):
+    """Replace translation review reasons while preserving ASR review state."""
+    result = dict(metadata or {})
+    has_asr_review = bool(result.get("asr_anomaly") or result.get("asr_suspect"))
+    has_asr_reason = any(
+        reason.startswith("asr_") for reason in result.get("review_reasons", [])
+    )
+    reasons = list(result.get("review_reasons", []))
+    had_translation_review = result.get("translation_review") or any(
+        reason.startswith("translation_") or reason == "translation_retry_failed"
+        for reason in reasons
+    )
+    legacy_reason = result.get("review_reason")
+    if legacy_reason and legacy_reason not in reasons:
+        reasons.append(legacy_reason)
+    elif (
+        result.get("review")
+        and not reasons
+        and not had_translation_review
+        and not has_asr_review
+    ):
+        reasons.append("legacy_review")
+    reasons = [
+        reason for reason in reasons
+        if not (
+            reason.startswith("translation_")
+            or reason in {"translation_retry_failed", "translation_error"}
+        )
+    ]
+    reasons.extend(
+        issue
+        if issue in {"translation_retry_failed", "translation_error"}
+        else f"translation_{issue}"
+        for issue in issues
+    )
+    result.pop("review_reason", None)
+    result.pop("translation_review", None)
+    result.pop("translation_issues", None)
+    if issues:
         result["translation_review"] = True
         result["translation_issues"] = list(issues)
+    if reasons:
+        result["review_reasons"] = reasons
+        result["review"] = True
     else:
-        had_translation_review = result.pop("translation_review", False)
-        result.pop("translation_issues", None)
-        if (
-            had_translation_review
-            and not result.get("asr_anomaly")
-            and not result.get("review_reason")
-        ):
+        result.pop("review_reasons", None)
+        if had_translation_review and not has_asr_review and not has_asr_reason:
             result.pop("review", None)
+        elif has_asr_review:
+            result["review"] = True
     return result
 
 

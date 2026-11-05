@@ -63,7 +63,9 @@ def write_jsonl_exclusive(path, records):
 
 
 def build_replay_hotwords(terminology, context):
-    return terminology.asr_prompt(" ".join(context[-4:])) or None
+    return terminology.asr_prompt(
+        " ".join(context[-4:]), include_always=False
+    ) or None
 
 
 def replay(path, output_path, start_seconds=0.0, duration_seconds=None, beam_size=1):

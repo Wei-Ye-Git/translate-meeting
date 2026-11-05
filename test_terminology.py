@@ -163,7 +163,7 @@ class TerminologyTests(unittest.TestCase):
             with self.subTest(source=source_text):
                 self.assertEqual(terms.apply(source_text, translated), expected)
 
-    def test_meeting_core_terms_are_available_before_they_are_recognized(self):
+    def test_asr_prompt_does_not_inject_unspoken_core_terms(self):
         terms = Terminology({
             "AI": {"target": "AI", "asr_always": True},
             "PR": {"target": "PR", "asr_always": True},
@@ -172,8 +172,24 @@ class TerminologyTests(unittest.TestCase):
             "pipeline": {"target": "流水线"},
         })
 
-        self.assertEqual(terms.asr_prompt(""), "AI, PR, prompt, ticket")
-        self.assertEqual(terms.asr_prompt("The pipeline is ready."), "AI, PR, prompt, ticket, pipeline")
+        self.assertEqual(terms.asr_prompt("", include_always=False), "")
+        self.assertEqual(
+            terms.asr_prompt("The pipeline is ready.", include_always=False),
+            "pipeline",
+        )
+
+    def test_asr_prompt_can_skip_always_terms_but_keep_context_matches(self):
+        terms = Terminology({
+            "AI": {"target": "AI", "asr_always": True},
+            "pipeline": {"target": "流水线"},
+        })
+
+        self.assertEqual(terms.asr_prompt("The pipeline uses AI."), "AI, pipeline")
+        self.assertEqual(
+            terms.asr_prompt("The pipeline uses AI.", include_always=False),
+            "pipeline, AI",
+        )
+        self.assertEqual(terms.asr_prompt("", include_always=False), "")
 
     def test_rejects_invalid_entry_without_target(self):
         with self.assertRaises(ValueError):

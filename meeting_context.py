@@ -1,6 +1,26 @@
 from collections import deque
 
 
+def should_add_to_meeting_context(metadata):
+    """Keep suspect and fragmentary ASR out of prompts; translation review is orthogonal."""
+    metadata = metadata or {}
+    reasons = list(metadata.get("review_reasons", []))
+    if metadata.get("review_reason"):
+        reasons.append(metadata["review_reason"])
+    asr_review_reasons = {
+        "asr_anomaly",
+        "asr_implausible_word_rate",
+        "asr_short_fragment",
+        "short_asr_fragment",
+        "implausible_word_rate",
+    }
+    return (
+        not metadata.get("asr_suspect")
+        and not metadata.get("asr_anomaly")
+        and not asr_review_reasons.intersection(reasons)
+    )
+
+
 class MeetingContext:
     """Bounded, lightweight meeting state used to guide ASR and disambiguation."""
 
@@ -30,7 +50,7 @@ class MeetingContext:
         try:
             index = len(sentences) - 1 - sentences[::-1].index(previous)
         except ValueError:
-            return
+            return False
         sentences[index] = corrected
         self.sentences.clear()
         self.sentences.extend(sentences)
@@ -51,6 +71,7 @@ class MeetingContext:
             if term in self.terms:
                 self.terms.remove(term)
             self.terms.append(term)
+        return True
 
     def snapshot(self):
         terms = list(self.terms)

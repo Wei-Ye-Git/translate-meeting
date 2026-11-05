@@ -3,24 +3,20 @@ DEFAULT_TERMINOLOGY = {
         "target": "AI",
         "aliases": ["大赦国际", "人工智能"],
         "asr_variants": ["A I", "A. I."],
-        "asr_always": True,
     },
     "PR": {
         "target": "拉取请求",
         "aliases": ["公关", "拉拉请求"],
         "asr_variants": ["P R", "pull request"],
-        "asr_always": True,
     },
     "prompt": {
         "target": "提示词",
         "aliases": ["迅速", "快速"],
         "asr_variants": ["prompts"],
-        "asr_always": True,
     },
     "ticket": {
         "target": "工单",
         "aliases": ["机票", "门票"],
-        "asr_always": True,
     },
     "developer": {"target": "开发者", "aliases": ["开发商"]},
     "unit test": {

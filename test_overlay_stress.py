@@ -72,6 +72,60 @@ class OverlayStressTests(unittest.TestCase):
         finally:
             overlay.close()
 
+    def test_corrected_history_removes_stale_review_marker(self):
+        overlay = Overlay(font_size=14)
+        overlay.root.withdraw()
+        try:
+            overlay.append_history(
+                0,
+                "Suspicious transcript.",
+                "待复核译文。",
+                metadata={
+                    "start": 1.0,
+                    "end": 2.0,
+                    "version": 1,
+                    "review": True,
+                    "review_reasons": ["asr_implausible_word_rate"],
+                },
+            )
+            overlay.update_history_original(
+                0,
+                "Corrected transcript.",
+                metadata={
+                    "start": 1.0,
+                    "end": 2.0,
+                    "version": 2,
+                    "corrected": True,
+                },
+                version=2,
+            )
+
+            self.assertNotIn("[需要复核]", overlay.history_text.get("1.0", "end"))
+            self.assertNotIn("[需要复核]", overlay.bilingual_text())
+        finally:
+            overlay.close()
+
+    def test_corrected_history_does_not_save_translation_placeholder_as_previous(self):
+        overlay = Overlay(font_size=14)
+        overlay.root.withdraw()
+        try:
+            overlay.append_history(
+                0,
+                "First transcript.",
+                "",
+                metadata={"start": 1.0, "end": 2.0, "version": 1},
+            )
+            overlay.update_history_original(
+                0,
+                "Corrected transcript.",
+                metadata={"start": 1.0, "end": 2.0, "version": 2, "corrected": True},
+                version=2,
+            )
+
+            self.assertNotIn("[ZH - 修订前]", overlay.bilingual_text())
+        finally:
+            overlay.close()
+
     def test_new_preview_clears_translation_from_previous_phrase(self):
         overlay = Overlay(font_size=14)
         overlay.root.withdraw()

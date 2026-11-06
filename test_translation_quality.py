@@ -1,6 +1,11 @@
 import unittest
 
-from translator import apply_translation_quality_status, translation_quality_issues
+from translator import (
+    apply_translation_quality_status,
+    clear_review_reason,
+    set_review_reason,
+    translation_quality_issues,
+)
 
 
 class TranslationQualityTests(unittest.TestCase):
@@ -28,10 +33,74 @@ class TranslationQualityTests(unittest.TestCase):
 
     def test_successful_translation_keeps_existing_asr_review_marker(self):
         status = apply_translation_quality_status(
-            {"review": True, "review_reason": "implausible_word_rate"}, []
+            {
+                "review": True,
+                "asr_suspect": True,
+                "review_reasons": ["asr_implausible_word_rate"],
+            },
+            [],
         )
 
         self.assertTrue(status["review"])
+
+    def test_failed_quality_retry_remains_a_persistent_review_reason(self):
+        status = apply_translation_quality_status(
+            {"version": 2}, ["missing_numbers", "translation_retry_failed"]
+        )
+
+        self.assertTrue(status["review"])
+        self.assertIn("translation_retry_failed", status["translation_issues"])
+        self.assertEqual(
+            status["review_reasons"],
+            ["translation_missing_numbers", "translation_retry_failed"],
+        )
+
+    def test_translation_recovery_clears_previous_translation_error(self):
+        status = set_review_reason({}, "translation_error")
+        recovered = apply_translation_quality_status(status, [])
+
+        self.assertNotIn("review", recovered)
+        self.assertNotIn("review_reasons", recovered)
+
+    def test_quality_pass_preserves_legacy_review_without_reason(self):
+        status = apply_translation_quality_status({"review": True}, [])
+
+        self.assertTrue(status["review"])
+
+    def test_quality_pass_preserves_asr_review_with_existing_legacy_translation_reason(self):
+        status = apply_translation_quality_status(
+            {
+                "review": True,
+                "review_reasons": ["asr_implausible_word_rate"],
+                "translation_review": True,
+                "translation_issues": ["missing_numbers"],
+            },
+            [],
+        )
+
+        self.assertTrue(status["review"])
+        self.assertEqual(status["review_reasons"], ["asr_implausible_word_rate"])
+
+    def test_review_reasons_clear_independently(self):
+        status = set_review_reason({"version": 2}, "asr_implausible_word_rate")
+        status = set_review_reason(status, "translation_missing_numbers")
+        status = clear_review_reason(status, "asr_implausible_word_rate")
+
+        self.assertTrue(status["review"])
+        self.assertEqual(status["review_reasons"], ["translation_missing_numbers"])
+
+    def test_correction_clears_asr_reasons_but_preserves_translation_review(self):
+        status = {
+            "review": True,
+            "review_reasons": ["asr_implausible_word_rate", "translation_missing_numbers"],
+            "translation_review": True,
+            "translation_issues": ["missing_numbers"],
+        }
+
+        corrected = clear_review_reason(status, "asr_implausible_word_rate")
+
+        self.assertTrue(corrected["review"])
+        self.assertEqual(corrected["review_reasons"], ["translation_missing_numbers"])
 
     class Tokenizer:
         class Batch(dict):

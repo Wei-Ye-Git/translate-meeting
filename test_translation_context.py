@@ -40,6 +40,32 @@ class TranslationContextTests(unittest.TestCase):
 
         self.assertLessEqual(len(correction_prompt(records, 1, limit=3)), 360)
 
+    def test_correction_prompt_skips_asr_review_candidates(self):
+        records = [
+            ["Earlier valid meeting context.", ""],
+            ["Maybe later", ""],
+            ["The target sentence needs correction.", ""],
+        ]
+        metadata = [{}, {"review_reasons": ["asr_short_fragment"]}, {}]
+
+        prompt = correction_prompt(records, 2, metadata=metadata)
+
+        self.assertEqual(prompt, "Earlier valid meeting context.")
+
+    def test_correction_snapshot_rejects_a_changed_record_version(self):
+        from main import correction_snapshot_is_current
+
+        self.assertFalse(
+            correction_snapshot_is_current(
+                ["corrected text", ""], {"version": 2}, "original text", 1
+            )
+        )
+        self.assertTrue(
+            correction_snapshot_is_current(
+                ["original text", ""], {"version": 1}, "original text", 1
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

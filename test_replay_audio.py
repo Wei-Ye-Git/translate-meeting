@@ -10,7 +10,7 @@ from terminology import Terminology
 
 
 class ReplayAudioTests(unittest.TestCase):
-    def test_hotwords_include_core_terms_and_recently_spoken_terms(self):
+    def test_hotwords_include_only_recently_spoken_terms(self):
         terms = Terminology({
             "AI": {"target": "AI", "asr_always": True},
             "PR": {"target": "PR", "asr_always": True},
@@ -26,10 +26,10 @@ class ReplayAudioTests(unittest.TestCase):
             ["Earlier note about prompt engineering.", "The speaker shares PowerPoint in Teams."],
         )
 
-        self.assertEqual(hotwords, "AI, PR, prompt, ticket, prompt engineering, PowerPoint, Teams")
+        self.assertEqual(hotwords, "prompt engineering, PowerPoint, Teams")
         self.assertEqual(
             build_replay_hotwords(terms, ["No configured terms are spoken here."]),
-            "AI, PR, prompt, ticket",
+            None,
         )
 
     def test_reads_wav_as_timestamped_float_chunks(self):

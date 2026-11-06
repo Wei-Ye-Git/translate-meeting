@@ -1,7 +1,12 @@
 import queue
 import unittest
 
-from translation_queue import publish_live_translation, take_latest
+from translation_queue import (
+    is_live_translation_current,
+    publish_live_translation,
+    reset_live_translation,
+    take_latest,
+)
 
 
 class TranslationQueueTests(unittest.TestCase):
@@ -41,6 +46,24 @@ class TranslationQueueTests(unittest.TestCase):
 
         self.assertEqual(revision, 2)
         self.assertEqual(pending.get_nowait(), (2, "The second sentence"))
+
+    def test_reset_invalidates_inflight_translation_and_clears_pending_work(self):
+        pending = queue.Queue(maxsize=1)
+        state = {"revision": 0}
+        old_revision = publish_live_translation(
+            "The old utterance", 2, state, pending
+        )
+        pending.get_nowait()
+        pending.task_done()
+        publish_live_translation("The old utterance continued", 2, state, pending)
+
+        reset_live_translation(state, pending)
+
+        self.assertGreater(state["revision"], old_revision)
+        self.assertEqual(state["text"], "")
+        self.assertTrue(pending.empty())
+        self.assertEqual(pending.unfinished_tasks, 0)
+        self.assertFalse(is_live_translation_current(state, old_revision, "The old utterance"))
 
 
 if __name__ == "__main__":

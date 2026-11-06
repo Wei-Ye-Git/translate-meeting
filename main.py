@@ -49,18 +49,45 @@ from text_processing import (
     should_hold_after_waiting_silence,
     should_finalize_after_waiting_timeout,
 )
-from translator import Translator
+from translator import (
+    Translator,
+    apply_translation_quality_status,
+    clear_review_reason,
+    set_review_reason,
+)
 from terminology import Terminology
-from meeting_context import MeetingContext
+from meeting_context import MeetingContext, should_add_to_meeting_context
 from session_archive import AudioRecorder, create_session_directory
 from stable_text import StableText
 from speech_detection import SileroSpeechDetector, contains_voice
-from translation_queue import publish_live_translation, take_latest
+from translation_queue import (
+    is_live_translation_current,
+    publish_live_translation,
+    reset_live_translation,
+    take_latest,
+)
 
 
-def correction_prompt(records, index, limit=3):
-    indexes = range(max(0, index - limit), index)
-    return " ".join(records[item_index][0] for item_index in indexes)[-360:]
+def correction_prompt(records, index, limit=3, metadata=None):
+    metadata = metadata or []
+    selected = []
+    for item_index in range(index - 1, -1, -1):
+        item_metadata = metadata[item_index] if item_index < len(metadata) else {}
+        if not should_add_to_meeting_context(item_metadata):
+            continue
+        selected.append(records[item_index][0])
+        if len(selected) >= limit:
+            break
+    return " ".join(reversed(selected))[-360:]
+
+
+def correction_snapshot_is_current(record, metadata, expected_text, expected_version):
+    return (
+        record is not None
+        and metadata is not None
+        and metadata.get("version") == expected_version
+        and record[0] == expected_text
+    )
 
 
 def main():
@@ -127,6 +154,7 @@ def main():
         max_sentences=cfg.context_max_sentences,
         max_chars=cfg.context_max_chars,
     )
+    context_seeded_records = set()
     translator = Translator(
         os.path.join(root_dir, cfg.translate_model_dir),
         cfg.translate_device,
@@ -158,6 +186,30 @@ def main():
         translate_device=cfg.translate_device,
         loopback_device=device.name,
     )
+
+    def snapshot_records():
+        with records_lock:
+            return [tuple(record) for record in records], [
+                metadata.copy() for metadata in record_metadata
+            ]
+
+    def render_history(records_snapshot, metadata_snapshot):
+        lines = []
+        for index, (original, translated) in enumerate(records_snapshot):
+            metadata = metadata_snapshot[index]
+            timestamp = (
+                f"[{Overlay._format_timestamp(metadata['start'])}-"
+                f"{Overlay._format_timestamp(metadata['end'])}] "
+            )
+            review = "[需要复核] " if metadata.get("review") else ""
+            corrected = "[已修订] " if metadata.get("corrected") else ""
+            lines.append(f"{timestamp}{review}{corrected}[EN] {original}\n[ZH] {translated}\n")
+            if metadata.get("previous_original"):
+                lines.append(f"[EN - 修订前] {metadata['previous_original']}\n")
+            if metadata.get("previous_translation"):
+                lines.append(f"[ZH - 修订前] {metadata['previous_translation']}\n")
+            lines.append("\n")
+        return "".join(lines)
 
     def record_capture_warning(category, message, filename, lineno, count):
         if "discontinuity" in message.lower():
@@ -224,6 +276,11 @@ def main():
                 # ASR/translation worker on a closed or stalled UI.
                 return
 
+    def publish_live_reset():
+        with live_state_lock:
+            reset_live_translation(live_state, live_translation_queue)
+        publish_result("live_reset", "", "", None)
+
     def enqueue_translation(index):
         while True:
             try:
@@ -273,7 +330,7 @@ def main():
             recognized_text if asr_anomaly else clean_repetitions(recognized_text)
         )
         if not asr_anomaly and not is_recordable_sentence(
-            original, allow_single_word=bool(terminology.matching_terms(original))
+            original
         ):
             return None
         with records_lock:
@@ -292,72 +349,39 @@ def main():
             if asr_anomaly:
                 metadata["asr_anomaly"] = True
             if asr_anomaly or is_review_candidate(original) or suspect_asr:
-                metadata["review"] = True
+                reason = (
+                    "asr_implausible_word_rate" if suspect_asr
+                    else "asr_anomaly" if asr_anomaly
+                    else "asr_short_fragment"
+                )
+                metadata = set_review_reason(metadata, reason)
             if suspect_asr:
                 metadata["asr_suspect"] = True
-                metadata["review_reason"] = "implausible_word_rate"
-            elif asr_anomaly:
-                metadata["review_reason"] = "asr_anomaly"
-            elif is_review_candidate(original):
-                metadata["review_reason"] = "short_asr_fragment"
             record_metadata.append(metadata)
             record_contexts.append(meeting_context.recent_sentences(limit=3))
             index = len(records) - 1
-            if not asr_anomaly:
+            if should_add_to_meeting_context(metadata):
                 meeting_context.add(original)
+                context_seeded_records.add(index)
         publish_result("history_add", index, original, metadata, metadata["version"])
         if not enqueue_translation(index):
             publish_result("status", "翻译队列未能接收任务，英文记录已保留", "", None)
         return index
 
     def save_history_file():
-        with history_save_lock:
-            with records_lock:
-                saved_records = [tuple(record) for record in records]
-                saved_metadata = [metadata.copy() for metadata in record_metadata]
-            history_path = os.path.join(session_dir, cfg.history_file)
-            content = "".join(
-                f"[{Overlay._format_timestamp(saved_metadata[index]['start'])}-"
-                f"{Overlay._format_timestamp(saved_metadata[index]['end'])}] "
-                f"{'[需要复核] ' if saved_metadata[index].get('review') else ''}"
-                f"{'[已修订] ' if saved_metadata[index].get('corrected') else ''}"
-                f"[EN] {original}\n[ZH] {translated}\n"
-                f"{'[EN - 修订前] ' + saved_metadata[index]['previous_original'] + chr(10) if saved_metadata[index].get('previous_original') else ''}"
-                f"{'[ZH - 修订前] ' + saved_metadata[index]['previous_translation'] + chr(10) if saved_metadata[index].get('previous_translation') else ''}\n"
-                for index, (original, translated) in enumerate(saved_records)
-            )
-            temporary_path = history_path + ".tmp"
-            with open(temporary_path, "w", encoding="utf-8") as output:
-                output.write(content)
-            os.replace(temporary_path, history_path)
+        save_history_snapshot(os.path.join(session_dir, cfg.history_file))
 
     def write_timestamped_history():
-            with records_lock:
-                saved_records = [tuple(record) for record in records]
-                saved_metadata = [metadata.copy() for metadata in record_metadata]
-            timestamped_file = f"meeting_transcript_{session_id}.txt"
-            timestamped_path = os.path.join(session_dir, timestamped_file)
-            content_lines = []
-            for index, (original, translated) in enumerate(saved_records):
-                metadata = saved_metadata[index]
-                timestamps = (
-                    f"[{Overlay._format_timestamp(metadata['start'])}-"
-                    f"{Overlay._format_timestamp(metadata['end'])}] "
-                )
-                review = "[需要复核] " if metadata.get("review") else ""
-                corrected = "[已修订] " if metadata.get("corrected") else ""
-                content_lines.append(
-                    f"{timestamps}{review}{corrected}[EN] {original}\n[ZH] {translated}\n"
-                )
-                if metadata.get("previous_original"):
-                    content_lines.append(f"[EN - 修订前] {metadata['previous_original']}\n")
-                if metadata.get("previous_translation"):
-                    content_lines.append(f"[ZH - 修订前] {metadata['previous_translation']}\n")
-                content_lines.append("\n")
-            temporary_path = timestamped_path + ".tmp"
+        timestamped_file = f"meeting_transcript_{session_id}.txt"
+        save_history_snapshot(os.path.join(session_dir, timestamped_file))
+
+    def save_history_snapshot(history_path):
+        with history_save_lock:
+            saved_records, saved_metadata = snapshot_records()
+            temporary_path = history_path + ".tmp"
             with open(temporary_path, "w", encoding="utf-8") as output:
-                output.write("".join(content_lines))
-            os.replace(temporary_path, timestamped_path)
+                output.write(render_history(saved_records, saved_metadata))
+            os.replace(temporary_path, history_path)
 
     def append_revision_log(entry):
         revision_path = os.path.join(session_dir, "meeting_revisions.jsonl")
@@ -367,9 +391,7 @@ def main():
 
     def finalize_history_sentence(words):
         text = terminology.normalize_source(clean_repetitions(words_to_text(words)))
-        if not is_recordable_sentence(
-            text, allow_single_word=bool(terminology.matching_terms(text))
-        ):
+        if not is_recordable_sentence(text):
             return None
         return text
 
@@ -417,14 +439,16 @@ def main():
                 recent_context = meeting_context.asr_prompt_context()
             recent_context = terminology.normalize_source(recent_context)
             matching_terms = terminology.asr_prompt(
-                recent_context, max_terms=cfg.asr_glossary_prompt_terms
+                recent_context,
+                max_terms=cfg.asr_glossary_prompt_terms,
+                include_always=False,
             )
             audio = highpass(audio, cfg.samplerate)
             try:
                 with asr_lock:
                     words = asr.transcribe(
                         audio,
-                initial_prompt=matching_terms or None,
+                        initial_prompt=build_asr_prompt(recent_context) or None,
                         hotwords=matching_terms or None,
                         beam_size=beam_size,
                         repetition_penalty=cfg.asr_repetition_penalty,
@@ -439,7 +463,7 @@ def main():
                     with asr_lock:
                         words = asr.transcribe(
                             audio,
-                            initial_prompt=matching_terms or None,
+                            initial_prompt=build_asr_prompt(recent_context) or None,
                             hotwords=matching_terms or None,
                             beam_size=1,
                             repetition_penalty=cfg.asr_repetition_penalty,
@@ -487,6 +511,7 @@ def main():
                 max(0.0, (target_end - target_start) / cfg.samplerate),
             )
             if issue:
+                diagnostics.increment_quality("asr_suspect_windows")
                 suspect_asr_ranges.append(
                     (target_start / cfg.samplerate, target_end / cfg.samplerate)
                 )
@@ -525,8 +550,11 @@ def main():
             ):
                 with records_lock:
                     prompt = correction_prompt(
-                        records, index, limit=cfg.history_context_window
+                        records, index, limit=cfg.history_context_window,
+                        metadata=record_metadata,
                     )
+                    expected_original = records[index][0]
+                    expected_version = record_metadata[index]["version"]
                 correction_candidates.append(
                     (
                         index,
@@ -534,6 +562,8 @@ def main():
                         int(words[-1].end * cfg.samplerate),
                         prompt,
                         [word.probability for word in words if word.probability is not None],
+                        expected_original,
+                        expected_version,
                     )
                 )
 
@@ -542,7 +572,10 @@ def main():
                 return
             available_end = recent_chunks[-1].end_frame
             for candidate in list(correction_candidates):
-                index, target_start, target_end, prompt, original_confidences = candidate
+                (
+                    index, target_start, target_end, prompt, original_confidences,
+                    expected_original, expected_version,
+                ) = candidate
                 required_end = target_end + int(
                     cfg.correction_context_after_seconds * cfg.samplerate
                 )
@@ -582,6 +615,8 @@ def main():
                             target_end,
                             prompt,
                             original_confidences,
+                            expected_original,
+                            expected_version,
                         )
                     )
                 except queue.Full:
@@ -643,7 +678,7 @@ def main():
                         publish_result("english", "", "", None)
                         stable_preview.reset()
                         stable_preview_text = ""
-                        publish_result("live_reset", "", "", None)
+                        publish_live_reset()
                         if time.monotonic() - last_history_flush >= cfg.history_flush_seconds:
                             save_history_file()
                             write_timestamped_history()
@@ -678,7 +713,7 @@ def main():
                     stable_preview_text = ""
                     committed_until_frame = chunk.start_frame
                     last_chunk_end_frame = chunk.end_frame
-                    publish_result("live_reset", "", "", None)
+                    publish_live_reset()
                     publish_result("status", f"音频流出现第 {audio_gap_count} 个间隙", "", None)
                 with records_lock:
                     storage_full = len(records) >= cfg.max_stored_records
@@ -707,10 +742,15 @@ def main():
                     recent_context = meeting_context.asr_prompt_context()
                 recent_context = terminology.normalize_source(recent_context)
                 matched_terms = terminology.asr_prompt(
-                    recent_context, max_terms=cfg.asr_glossary_prompt_terms
+                    recent_context,
+                    max_terms=cfg.asr_glossary_prompt_terms,
+                    include_always=False,
                 )
 
                 backlog_seconds = audio_queue.qsize() * cfg.chunk_seconds
+                diagnostics.update_quality_max(
+                    "max_audio_backlog_seconds", backlog_seconds
+                )
                 if (
                     backlog_seconds >= cfg.audio_backlog_warning_seconds
                     and time.monotonic() - last_backlog_warning >= 5.0
@@ -762,7 +802,7 @@ def main():
                                 with asr_lock:
                                     p_words = asr.transcribe(
                                         highpass(preview_audio, cfg.samplerate),
-                                            initial_prompt=matched_terms or None,
+                                        initial_prompt=build_asr_prompt(recent_context) or None,
                                         hotwords=matched_terms or None,
                                         beam_size=1,
                                         word_timestamps=False,
@@ -848,14 +888,14 @@ def main():
                                     publish_result("english", clean_repetitions(words_to_text(pending_words)), "", None)
                                     stable_preview.reset()
                                     stable_preview_text = ""
-                                    publish_result("live_reset", "", "", None)
+                                    publish_live_reset()
                                 else:
                                     utterance_chunks = []
                                     last_forced_transcription_end = None
                                     publish_result("english", "", "", None)
                                     stable_preview.reset()
                                     stable_preview_text = ""
-                                    publish_result("live_reset", "", "", None)
+                                    publish_live_reset()
                             else:
                                 if current_duration >= cfg.max_utterance_seconds * 1.5:
                                     cand = add_history_sentence(
@@ -867,7 +907,7 @@ def main():
                                     publish_result("english", "", "", None)
                                     stable_preview.reset()
                                     stable_preview_text = ""
-                                    publish_result("live_reset", "", "", None)
+                                    publish_live_reset()
                                 else:
                                     publish_result("status", "检测到语音片段，等待更多上下文", "", None)
                         last_preview_text = ""
@@ -926,7 +966,7 @@ def main():
                                     publish_result("english", "", "", None)
                                     stable_preview.reset()
                                     stable_preview_text = ""
-                                    publish_result("live_reset", "", "", None)
+                                    publish_live_reset()
                                     continue
                                 if waiting_for_continuation and pending_words:
                                     if should_hold_after_waiting_silence(
@@ -962,7 +1002,7 @@ def main():
                                     publish_result("english", "", "", None)
                                     stable_preview.reset()
                                     stable_preview_text = ""
-                                    publish_result("live_reset", "", "", None)
+                                    publish_live_reset()
                                 else:
                                     utterance_chunks = trim_trailing_silence_chunks(
                                         utterance_chunks, silence_consecutive_chunks
@@ -1022,6 +1062,8 @@ def main():
                         target_end,
                         prompt,
                         original_confidences,
+                        expected_original,
+                        expected_version,
                 ) = correction_queue.get(timeout=0.2)
                 except queue.Empty:
                     if capture_done_event.is_set():
@@ -1029,6 +1071,14 @@ def main():
                     continue
                 correction_queue.task_done()
                 try:
+                    with records_lock:
+                        if not correction_snapshot_is_current(
+                            records[index] if index < len(records) else None,
+                            record_metadata[index] if index < len(record_metadata) else None,
+                            expected_original,
+                            expected_version,
+                        ):
+                            continue
                     # 优先保证实时识别流畅，若有实时音频等待则先让步
                     wait_started = time.monotonic()
                     while (
@@ -1039,13 +1089,15 @@ def main():
                         time.sleep(0.05)
 
                     asr_prompt = terminology.asr_prompt(
-                        prompt, max_terms=cfg.asr_glossary_prompt_terms
+                        prompt,
+                        max_terms=cfg.asr_glossary_prompt_terms,
+                        include_always=False,
                     )
                     correction_started = time.monotonic()
                     with asr_lock:
                         corrected_words = asr.transcribe(
                             highpass(context_audio, cfg.samplerate),
-                            initial_prompt=build_asr_prompt(prompt) or asr_prompt or None,
+                            initial_prompt=build_asr_prompt(prompt) or None,
                             hotwords=asr_prompt or None,
                             condition_on_previous_text=cfg.asr_condition_on_previous_text,
                             beam_size=cfg.asr_correction_beam_size,
@@ -1088,14 +1140,10 @@ def main():
                         word.probability for word in corrected_target_words
                         if word.probability is not None
                     ]
-                    with records_lock:
-                        original = records[index][0] if index < len(records) else ""
-                        expected_version = (
-                            record_metadata[index]["version"]
-                            if index < len(record_metadata) else None
-                        )
+                    original = expected_original
                     if (
-                        correction_is_usable(original, corrected)
+                        is_recordable_sentence(corrected)
+                        and correction_is_usable(original, corrected)
                         and correction_is_confident(
                             original,
                             corrected,
@@ -1108,6 +1156,10 @@ def main():
                         with records_lock:
                             if (
                                 index < len(records)
+                                and correction_snapshot_is_current(
+                                    records[index], record_metadata[index],
+                                    expected_original, expected_version,
+                                )
                                 and record_metadata[index]["version"] == expected_version
                                 and corrected != records[index][0]
                             ):
@@ -1117,7 +1169,22 @@ def main():
                                 records[index][0] = corrected
                                 record_metadata[index]["version"] += 1
                                 record_metadata[index].pop("asr_anomaly", None)
-                                metadata = record_metadata[index].copy()
+                                updated_metadata = dict(record_metadata[index])
+                                updated_metadata = clear_review_reason(
+                                    updated_metadata, "legacy_review"
+                                )
+                                for review_reason in (
+                                    "asr_implausible_word_rate",
+                                    "asr_anomaly",
+                                    "asr_short_fragment",
+                                ):
+                                    updated_metadata = clear_review_reason(
+                                        updated_metadata, review_reason
+                                    )
+                                updated_metadata.pop("asr_suspect", None)
+                                record_metadata[index].clear()
+                                record_metadata[index].update(updated_metadata)
+                                metadata = updated_metadata
                                 changed = True
                         if changed:
                             with records_lock:
@@ -1126,7 +1193,11 @@ def main():
                                         corrected if sentence == original else sentence
                                         for sentence in sentences
                                     ]
-                                meeting_context.replace_recent(original, corrected)
+                                if index in context_seeded_records:
+                                    meeting_context.replace_recent(original, corrected)
+                                else:
+                                    meeting_context.add(corrected)
+                                    context_seeded_records.add(index)
                             publish_result(
                                 "history_original_update",
                                 index,
@@ -1168,9 +1239,8 @@ def main():
                     revision, live_text = live_job
                     live_translation_queue.task_done()
                     with live_state_lock:
-                        if (
-                            live_state.get("revision") != revision
-                            or live_state.get("text") != live_text
+                        if not is_live_translation_current(
+                            live_state, revision, live_text
                         ):
                             continue
                     try:
@@ -1185,12 +1255,13 @@ def main():
                             words=len(live_text.split()),
                         )
                         with live_state_lock:
-                            is_current = (
-                                live_state.get("revision") == revision
-                                and live_state.get("text") == live_text
+                            is_current = is_live_translation_current(
+                                live_state, revision, live_text
                             )
                         if is_current:
-                            publish_result("live_translation", revision, translated_live, None)
+                            publish_result(
+                                "live_translation", revision, translated_live, live_text
+                            )
                     except Exception as error:
                         diagnostics.write_event(
                             "translation_error",
@@ -1238,7 +1309,15 @@ def main():
                                 context_sentences[-2:] + [original]
                             )
                             translated = translated_parts[-1]
-                        except Exception:
+                        except Exception as error:
+                            diagnostics.increment_quality(
+                                "translation_context_fallbacks"
+                            )
+                            diagnostics.write_event(
+                                "translation_context_fallback",
+                                index=index,
+                                error=repr(error),
+                            )
                             translated = translator.translate(
                                 original, quality=cfg.history_translation_quality
                             )
@@ -1249,6 +1328,7 @@ def main():
 
                     issues = translator.quality_issues(original, translated)
                     if issues:
+                        diagnostics.increment_quality("translation_quality_retries")
                         publish_result(
                             "status",
                             f"第 {index + 1} 句翻译质量检查提示: {', '.join(issues)}",
@@ -1260,6 +1340,7 @@ def main():
                                 translated = translator.translate(original, quality=True)
                             except Exception as error:
                                 issues.append("translation_retry_failed")
+                                diagnostics.increment_quality("translation_retry_failures")
                                 publish_result(
                                     "status",
                                     f"第 {index + 1} 句增强翻译重试失败: {error}",
@@ -1268,6 +1349,12 @@ def main():
                                 )
 
                     remaining_issues = translator.quality_issues(original, translated)
+                    if "translation_retry_failed" in issues:
+                        remaining_issues.append("translation_retry_failed")
+                    if "translation_error" in issues:
+                        remaining_issues.append("translation_error")
+                    if remaining_issues:
+                        diagnostics.increment_quality("translation_quality_unresolved")
                     with records_lock:
                         current_for_quality = (
                             index < len(records)
@@ -1289,9 +1376,13 @@ def main():
                     )
                     if remaining_issues or is_review_candidate(original):
                         with records_lock:
-                            if index < len(record_metadata):
-                                record_metadata[index]["review"] = True
-                                metadata["review"] = True
+                            if index < len(record_metadata) and is_review_candidate(original):
+                                updated_metadata = set_review_reason(
+                                    record_metadata[index], "asr_short_fragment"
+                                )
+                                record_metadata[index].clear()
+                                record_metadata[index].update(updated_metadata)
+                                metadata = updated_metadata
                         publish_result("history_review", index, "", None)
                     if remaining_issues:
                         publish_result(
@@ -1342,8 +1433,8 @@ def main():
                 except Exception as error:
                     with records_lock:
                         if index < len(records):
-                            updated_metadata = apply_translation_quality_status(
-                                record_metadata[index], ["translation_error"]
+                            updated_metadata = set_review_reason(
+                                record_metadata[index], "translation_error"
                             )
                             record_metadata[index].clear()
                             record_metadata[index].update(updated_metadata)
@@ -1414,13 +1505,12 @@ def main():
                 overlay.set_status(f"已二次修正第 {first + 1} 句转写")
             elif event == "live_translation":
                 with live_state_lock:
-                    is_current = live_state.get("revision") == first
+                    is_current = is_live_translation_current(
+                        live_state, first, fourth
+                    )
                 if is_current:
-                    overlay.update_current(overlay.current_english, second)
+                    overlay.update_current(fourth, second)
             elif event == "live_reset":
-                with live_state_lock:
-                    live_state["revision"] += 1
-                    live_state["text"] = ""
                 overlay.update_current("", "")
             elif event == "history_review":
                 visible_index = first - overlay.history_offset
@@ -1455,32 +1545,8 @@ def main():
         correction_thread.join()
         translation_thread.join()
         audio_recorder.close()
-        with records_lock:
-            saved_records = [tuple(record) for record in records]
-            saved_metadata = [metadata.copy() for metadata in record_metadata]
-
-        now_str = session_id
-        timestamped_file = f"meeting_transcript_{now_str}.txt"
-        timestamped_path = os.path.join(session_dir, timestamped_file)
-        content_lines = []
-        for index, (original, translated) in enumerate(saved_records):
-            metadata = saved_metadata[index]
-            timestamps = (
-                f"[{Overlay._format_timestamp(metadata['start'])}-"
-                f"{Overlay._format_timestamp(metadata['end'])}] "
-            )
-            review = "[需要复核] " if metadata.get("review") else ""
-            corrected = "[已修订] " if metadata.get("corrected") else ""
-            content_lines.append(f"{timestamps}{review}{corrected}[EN] {original}\n[ZH] {translated}\n")
-            if metadata.get("previous_original"):
-                content_lines.append(f"[EN - 修订前] {metadata['previous_original']}\n")
-            if metadata.get("previous_translation"):
-                content_lines.append(f"[ZH - 修订前] {metadata['previous_translation']}\n")
-            content_lines.append("\n")
-        full_content = "".join(content_lines)
-
-        with open(timestamped_path, "w", encoding="utf-8") as output:
-            output.write(full_content)
+        saved_records, _ = snapshot_records()
+        write_timestamped_history()
         save_history_file()
         stop_capture_warnings(warning_recorder)
         print(
@@ -1519,6 +1585,7 @@ def main():
             audio_seconds_written=round(
                 audio_recorder.frames_written / cfg.samplerate, 3
             ),
+            quality_stats=diagnostics.quality_snapshot(),
             transcript_path=os.path.join(session_dir, cfg.history_file),
             audio_path=os.path.join(session_dir, cfg.audio_filename),
         )

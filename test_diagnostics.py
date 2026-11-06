@@ -5,10 +5,28 @@ import unittest
 import warnings
 
 from audio_capture import AudioWarningRecorder
-from diagnostics import SessionDiagnostics
+from diagnostics import SessionDiagnostics, SessionQualityStats
 
 
 class SessionDiagnosticsTests(unittest.TestCase):
+    def test_session_quality_stats_track_failures_and_maximum_backlog(self):
+        stats = SessionQualityStats()
+        stats.increment("asr_suspect_windows")
+        stats.increment("translation_quality_retries")
+        stats.increment("translation_quality_unresolved")
+        stats.set_max("max_audio_backlog_seconds", 3.2)
+        stats.set_max("max_audio_backlog_seconds", 1.4)
+
+        self.assertEqual(
+            stats.snapshot(),
+            {
+                "asr_suspect_windows": 1,
+                "translation_quality_retries": 1,
+                "translation_quality_unresolved": 1,
+                "max_audio_backlog_seconds": 3.2,
+            },
+        )
+
     def test_writes_structured_events_and_coalesces_repeated_warnings(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "diagnostics.jsonl")

@@ -1,3 +1,5 @@
+"""Structured diagnostic event tests."""
+
 import json
 import os
 import tempfile
@@ -48,6 +50,14 @@ class SessionDiagnosticsTests(unittest.TestCase):
         self.assertEqual(events[0]["seconds"], 0.5)
         self.assertEqual(events[1]["count"], 2)
 
+    def test_diagnostics_sink_disables_itself_after_write_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "missing", "diagnostics.jsonl")
+            diagnostics = SessionDiagnostics(path)
+
+            self.assertFalse(diagnostics.write_event("first"))
+            self.assertFalse(diagnostics.write_event("second"))
+
     def test_audio_warning_recorder_coalesces_repeated_runtime_warnings(self):
         warnings_seen = []
         recorder = AudioWarningRecorder(lambda *items: warnings_seen.append(items))
@@ -58,6 +68,19 @@ class SessionDiagnosticsTests(unittest.TestCase):
 
         self.assertEqual(len(warnings_seen), 1)
         self.assertEqual(warnings_seen[0][-1], 2)
+        self.assertIn("first_observed_at", warnings_seen[0][-2])
+        self.assertIn("last_observed_at", warnings_seen[0][-2])
+
+    def test_warning_recorder_does_not_mutate_process_global_warning_configuration(self):
+        original_handler = warnings.showwarning
+        original_filters = list(warnings.filters)
+        recorder = AudioWarningRecorder(lambda *items: None)
+
+        recorder("device warning", RuntimeWarning, "capture.py", 12)
+        recorder.flush()
+
+        self.assertIs(warnings.showwarning, original_handler)
+        self.assertEqual(warnings.filters, original_filters)
 
     def test_capture_discontinuity_warning_is_distinguished_in_session_events(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -65,7 +88,9 @@ class SessionDiagnosticsTests(unittest.TestCase):
             diagnostics = SessionDiagnostics(path)
             capture_discontinuities = {"count": 0}
 
-            def record_capture_warning(category, message, filename, lineno, count):
+            def record_capture_warning(
+                category, message, filename, lineno, observed_range=None, count=1
+            ):
                 if "discontinuity" in message.lower():
                     capture_discontinuities["count"] += count
                     diagnostics.write_event(
@@ -73,6 +98,7 @@ class SessionDiagnosticsTests(unittest.TestCase):
                         count=count,
                         category=category,
                         message=message,
+                        **(observed_range or {}),
                     )
                 diagnostics.record_warning(category, message, filename, lineno, count)
 
@@ -88,6 +114,8 @@ class SessionDiagnosticsTests(unittest.TestCase):
         self.assertEqual(capture_discontinuities["count"], 2)
         self.assertEqual(events[0]["event"], "audio_capture_discontinuity_warning")
         self.assertEqual(events[0]["count"], 2)
+        self.assertIn("first_observed_at", events[0])
+        self.assertIn("last_observed_at", events[0])
         self.assertEqual(events[1]["event"], "warning_summary")
 
 

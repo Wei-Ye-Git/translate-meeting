@@ -1,3 +1,5 @@
+"""Stable live-preview text tests."""
+
 import unittest
 
 from stable_text import StableText

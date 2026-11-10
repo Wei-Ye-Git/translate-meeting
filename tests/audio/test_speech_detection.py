@@ -1,3 +1,5 @@
+"""Voice activity and energy gate tests."""
+
 import unittest
 
 import numpy as np

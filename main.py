@@ -1,6 +1,5 @@
 import os
 import datetime
-import json
 import queue
 import re
 import threading
@@ -16,22 +15,22 @@ from audio_capture import (
     capture_loop,
     extract_audio_range,
     pick_loopback_device,
-    start_capture_warnings,
-    stop_capture_warnings,
 )
 from config import Config
 from diagnostics import SessionDiagnostics
-from default_terminology import DEFAULT_TERMINOLOGY
+from i18n import t
 from model_validation import missing_model_files
 from overlay import Overlay
 from text_processing import (
     TimedWord,
-    asr_output_issue,
     clean_repetitions,
     split_timed_sentences,
     words_to_text,
     correction_is_usable,
     correction_is_confident,
+    correction_is_bounded,
+    correction_matches_target_range,
+    has_time_overlap,
     merge_incomplete_sentences,
     is_recordable_sentence,
     is_review_candidate,
@@ -40,7 +39,6 @@ from text_processing import (
     is_asr_anomaly,
     has_valid_time_span,
     words_in_time_range,
-    select_timed_words_for_target,
     finalize_pending_group,
     trim_trailing_silence_chunks,
     filter_uncommitted_words,
@@ -48,6 +46,7 @@ from text_processing import (
     should_schedule_correction,
     should_hold_after_waiting_silence,
     should_finalize_after_waiting_timeout,
+    asr_output_issue,
 )
 from translator import (
     Translator,
@@ -55,8 +54,9 @@ from translator import (
     clear_review_reason,
     set_review_reason,
 )
-from terminology import Terminology
+from terminology import TerminologyManager
 from meeting_context import MeetingContext, should_add_to_meeting_context
+from correction_context import correction_prompt, correction_snapshot_is_current
 from session_archive import AudioRecorder, create_session_directory
 from stable_text import StableText
 from speech_detection import SileroSpeechDetector, contains_voice
@@ -66,28 +66,10 @@ from translation_queue import (
     reset_live_translation,
     take_latest,
 )
-
-
-def correction_prompt(records, index, limit=3, metadata=None):
-    metadata = metadata or []
-    selected = []
-    for item_index in range(index - 1, -1, -1):
-        item_metadata = metadata[item_index] if item_index < len(metadata) else {}
-        if not should_add_to_meeting_context(item_metadata):
-            continue
-        selected.append(records[item_index][0])
-        if len(selected) >= limit:
-            break
-    return " ".join(reversed(selected))[-360:]
-
-
-def correction_snapshot_is_current(record, metadata, expected_text, expected_version):
-    return (
-        record is not None
-        and metadata is not None
-        and metadata.get("version") == expected_version
-        and record[0] == expected_text
-    )
+from worker_runtime import WorkerRuntime
+from session_history import append_revision, atomic_write_history
+from ui_events import apply_result_event
+from asr_pipeline import transcribe_audio_window
 
 
 def main():
@@ -104,14 +86,19 @@ def main():
     result_queue = queue.Queue(maxsize=cfg.max_result_queue_items)
     correction_queue = queue.Queue(maxsize=20)
     stop_event = threading.Event()
+    capture_stop_event = threading.Event()
     capture_done_event = threading.Event()
     asr_done_event = threading.Event()
     worker_done_event = threading.Event()
     correction_done_event = threading.Event()
+    translation_failed_event = threading.Event()
+    glossary_snapshot_lock = threading.Lock()
+    glossary_snapshot_state = {"snapshot": None}
     records = []
     record_metadata = []
     record_contexts = []
     records_lock = threading.Lock()
+    result_queue_lock = threading.Lock()
     correction_pending = set()
     last_history_flush = time.monotonic()
     last_backlog_warning = 0.0
@@ -137,18 +124,24 @@ def main():
     chunk_frames = int(cfg.samplerate * cfg.chunk_seconds)
     missing = missing_model_files(os.path.join(root_dir, "models"))
     if missing:
-        raise FileNotFoundError("模型文件缺失: " + ", ".join(missing))
+        raise FileNotFoundError(t("error.missing_models", files=", ".join(missing)))
     asr = ASR(
         cfg.whisper_model, cfg.whisper_device, cfg.whisper_compute_type,
         os.path.join(root_dir, "models", "whisper_base_en"),
         cpu_threads=cfg.whisper_cpu_threads,
     )
     terminology_path = os.path.join(root_dir, cfg.terminology_file)
-    if os.path.isfile(terminology_path):
-        terminology = Terminology.from_file(terminology_path)
-    else:
-        terminology = Terminology(DEFAULT_TERMINOLOGY)
-        print("[main] 未找到 terminology.json，使用通用内置术语表。")
+    default_terminology_path = os.path.join(root_dir, cfg.default_terminology_file)
+    terminology = TerminologyManager.from_files(
+        [
+            default_terminology_path,
+            os.path.join(root_dir, cfg.company_terminology_file),
+            terminology_path,
+        ]
+    )
+    glossary_snapshot_state["snapshot"] = terminology.snapshot()
+    if not os.path.isfile(terminology_path):
+        print(t("status.local_glossary_missing", path=terminology_path))
     meeting_context = MeetingContext(
         terminology,
         max_sentences=cfg.context_max_sentences,
@@ -164,17 +157,17 @@ def main():
     )
     try:
         speech_detector = SileroSpeechDetector(cfg.samplerate)
-        print("[vad] Silero VAD 已启用；仅用于能量门控未检测到语音的音频块")
+        print(t("status.vad_enabled"))
     except Exception as error:
         speech_detector = None
-        print(f"[vad] Silero VAD 不可用，使用原能量门控: {error}")
+        print(t("status.vad_fallback", error=error))
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     session_dir = create_session_directory(
         os.path.join(root_dir, "sessions"),
         session_id,
         prefix=cfg.session_directory_prefix,
     )
-    print(f"[main] 本次会议文件夹: {session_dir}")
+    print(t("status.session_directory", path=session_dir))
     diagnostics = SessionDiagnostics(os.path.join(session_dir, "diagnostics.jsonl"))
     diagnostics.write_event(
         "session_started",
@@ -193,38 +186,6 @@ def main():
                 metadata.copy() for metadata in record_metadata
             ]
 
-    def render_history(records_snapshot, metadata_snapshot):
-        lines = []
-        for index, (original, translated) in enumerate(records_snapshot):
-            metadata = metadata_snapshot[index]
-            timestamp = (
-                f"[{Overlay._format_timestamp(metadata['start'])}-"
-                f"{Overlay._format_timestamp(metadata['end'])}] "
-            )
-            review = "[需要复核] " if metadata.get("review") else ""
-            corrected = "[已修订] " if metadata.get("corrected") else ""
-            lines.append(f"{timestamp}{review}{corrected}[EN] {original}\n[ZH] {translated}\n")
-            if metadata.get("previous_original"):
-                lines.append(f"[EN - 修订前] {metadata['previous_original']}\n")
-            if metadata.get("previous_translation"):
-                lines.append(f"[ZH - 修订前] {metadata['previous_translation']}\n")
-            lines.append("\n")
-        return "".join(lines)
-
-    def record_capture_warning(category, message, filename, lineno, count):
-        if "discontinuity" in message.lower():
-            capture_stats["runtime_discontinuities"] += count
-            diagnostics.write_event(
-                "audio_capture_discontinuity_warning",
-                count=count,
-                category=category,
-                message=message,
-            )
-        diagnostics.record_warning(category, message, filename, lineno, count)
-
-    warning_recorder = start_capture_warnings(
-        record_capture_warning
-    )
     audio_recorder = AudioRecorder(
         os.path.join(session_dir, cfg.audio_filename), cfg.samplerate
     )
@@ -238,43 +199,56 @@ def main():
         audio_recorder.close()
         raise
     overlay.set_status(
-        "完整模式：优先保证内容完整"
+        t("status.mode_complete")
         if cfg.mode == "complete"
-        else "低延迟模式：优先追上当前语音"
+        else t("status.mode_low_latency")
     )
 
     def report_thread_error(name, error):
-        diagnostics.write_event("worker_error", worker=name, error=repr(error))
-        error_queue.put((name, error))
-        if name in {"音频采集", "语音识别"}:
-            stop_event.set()
+        try:
+            diagnostics.write_event("worker_error", worker=name, error=repr(error))
+        except Exception:
+            pass
+        try:
+            error_queue.put_nowait((name, error))
+        except Exception:
+            pass
+        if name == t("worker.audio_capture"):
+            capture_done_event.set()
+        elif name == t("worker.asr"):
+            capture_stop_event.set()
+        elif name == t("worker.correction"):
+            correction_done_event.set()
+        elif name == t("worker.translation"):
+            translation_failed_event.set()
 
     def publish_result(event, first, second="", fourth=None, version=None):
         item = (event, first, second, fourth, version)
-        try:
-            result_queue.put_nowait(item)
-        except queue.Full:
-            if event in {"english", "status"}:
-                return
-            retained = []
-            removed_disposable = False
-            while True:
-                try:
-                    existing = result_queue.get_nowait()
-                except queue.Empty:
-                    break
-                if not removed_disposable and existing[0] in {"english", "status"}:
-                    removed_disposable = True
-                    continue
-                retained.append(existing)
-            for existing in retained:
-                result_queue.put_nowait(existing)
-            if removed_disposable:
+        with result_queue_lock:
+            try:
                 result_queue.put_nowait(item)
-            else:
-                # The transcript is persisted independently; never block an
-                # ASR/translation worker on a closed or stalled UI.
-                return
+            except queue.Full:
+                if event in {"english", "status"}:
+                    return
+                retained = []
+                removed_disposable = False
+                while True:
+                    try:
+                        existing = result_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if not removed_disposable and existing[0] in {"english", "status"}:
+                        removed_disposable = True
+                        continue
+                    retained.append(existing)
+                for existing in retained:
+                    result_queue.put_nowait(existing)
+                if removed_disposable:
+                    result_queue.put_nowait(item)
+                else:
+                    # The transcript is persisted independently; never block an
+                    # ASR/translation worker on a closed or stalled UI.
+                    return
 
     def publish_live_reset():
         with live_state_lock:
@@ -287,22 +261,28 @@ def main():
                 history_translation_queue.put(index, timeout=0.2)
                 return True
             except queue.Full:
-                if stop_event.is_set() and worker_done_event.is_set():
+                if (
+                    translation_failed_event.is_set()
+                    or stop_event.is_set() and worker_done_event.is_set()
+                ):
                     return False
                 continue
 
     def capture_worker():
         try:
             capture_loop(
-                device, cfg.samplerate, chunk_frames, audio_queue, stop_event, cfg,
+                device, cfg.samplerate, chunk_frames, audio_queue, capture_stop_event, cfg,
                 audio_sink=audio_recorder,
                 diagnostic_callback=diagnostics.write_event,
                 capture_stats=capture_stats,
                 audio_timeline_sink=audio_recorder,
                 consumer_done_event=asr_done_event,
+                failure_callback=lambda error: report_thread_error(
+                    t("worker.audio_capture"), error
+                ),
             )
         except Exception as error:
-            report_thread_error("音频采集", error)
+            report_thread_error(t("worker.audio_capture"), error)
         finally:
             capture_done_event.set()
 
@@ -322,11 +302,13 @@ def main():
             current_start < suspect_end and current_end > suspect_start
             for suspect_start, suspect_end in suspect_asr_ranges
         )
-        if previous and previous_end is not None and current_start - previous_end <= 2.0:
-            words = remove_sentence_overlap_words(previous, words)
+        if previous and has_time_overlap(previous_end, current_start):
+            words = remove_sentence_overlap_words(previous, words, min_overlap=2)
         recognized_text = words_to_text(words)
         asr_anomaly = is_asr_anomaly(recognized_text)
-        original = terminology.normalize_source(
+        with glossary_snapshot_lock:
+            glossary_snapshot = glossary_snapshot_state["snapshot"]
+        original = glossary_snapshot.normalize_source(
             recognized_text if asr_anomaly else clean_repetitions(recognized_text)
         )
         if not asr_anomaly and not is_recordable_sentence(
@@ -365,7 +347,7 @@ def main():
                 context_seeded_records.add(index)
         publish_result("history_add", index, original, metadata, metadata["version"])
         if not enqueue_translation(index):
-            publish_result("status", "翻译队列未能接收任务，英文记录已保留", "", None)
+            publish_result("status", t("status.translation_queue_full"), "", None)
         return index
 
     def save_history_file():
@@ -378,25 +360,24 @@ def main():
     def save_history_snapshot(history_path):
         with history_save_lock:
             saved_records, saved_metadata = snapshot_records()
-            temporary_path = history_path + ".tmp"
-            with open(temporary_path, "w", encoding="utf-8") as output:
-                output.write(render_history(saved_records, saved_metadata))
-            os.replace(temporary_path, history_path)
+            atomic_write_history(
+                history_path, saved_records, saved_metadata, Overlay, t
+            )
 
     def append_revision_log(entry):
         revision_path = os.path.join(session_dir, "meeting_revisions.jsonl")
         with revision_log_lock:
-            with open(revision_path, "a", encoding="utf-8") as output:
-                output.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            append_revision(revision_path, entry)
 
     def finalize_history_sentence(words):
-        text = terminology.normalize_source(clean_repetitions(words_to_text(words)))
+        text = clean_repetitions(words_to_text(words))
         if not is_recordable_sentence(text):
             return None
         return text
 
     def worker():
         nonlocal audio_gap_count, last_history_flush, last_backlog_warning
+        glossary_snapshot = terminology.snapshot()
         utterance_chunks = []
         silence_consecutive_chunks = 0
         last_preview_time = time.monotonic() - cfg.asr_preview_interval_seconds
@@ -416,102 +397,74 @@ def main():
             """Transcribe with nearby audio so quiet boundary words survive VAD."""
             if not source_chunks:
                 return [], None, None
-            padding = int(cfg.audio_boundary_padding_seconds * cfg.samplerate)
-            target_start = source_chunks[0].start_frame
-            target_end = source_chunks[-1].end_frame
-            if committed_until_frame:
-                target_start = max(target_start, committed_until_frame)
-            available_chunks = list(recent_chunks)
-            known_starts = {chunk.start_frame for chunk in available_chunks}
-            available_chunks.extend(
-                chunk for chunk in source_chunks
-                if chunk.start_frame not in known_starts
-            )
-            available_chunks.sort(key=lambda chunk: chunk.start_frame)
-            audio_start = max(0, target_start - padding)
-            audio_end = target_end + padding
-            audio_start = max(audio_start, available_chunks[0].start_frame)
-            audio_end = min(audio_end, available_chunks[-1].end_frame)
-            audio = extract_audio_range(available_chunks, audio_start, audio_end)
-            if len(audio) == 0:
-                return [], np.empty(0, dtype=np.float32), None
+            with glossary_snapshot_lock:
+                glossary_snapshot = glossary_snapshot_state["snapshot"]
             with records_lock:
                 recent_context = meeting_context.asr_prompt_context()
-            recent_context = terminology.normalize_source(recent_context)
-            matching_terms = terminology.asr_prompt(
+            recent_context = glossary_snapshot.normalize_source(recent_context)
+            matching_terms = glossary_snapshot.asr_prompt(
                 recent_context,
                 max_terms=cfg.asr_glossary_prompt_terms,
                 include_always=False,
             )
-            audio = highpass(audio, cfg.samplerate)
-            try:
-                with asr_lock:
-                    words = asr.transcribe(
-                        audio,
-                        initial_prompt=build_asr_prompt(recent_context) or None,
-                        hotwords=matching_terms or None,
-                        beam_size=beam_size,
-                        repetition_penalty=cfg.asr_repetition_penalty,
-                        max_initial_timestamp=cfg.asr_max_initial_timestamp,
-                    )
-            except Exception as error:
+            result = transcribe_audio_window(
+                source_chunks,
+                list(recent_chunks),
+                committed_until_frame,
+                cfg.samplerate,
+                cfg.audio_boundary_padding_seconds,
+                cfg.max_asr_word_duration_seconds,
+                glossary_snapshot,
+                recent_context,
+                matching_terms,
+                asr,
+                asr_lock,
+                beam_size,
+                cfg.asr_repetition_penalty,
+                cfg.asr_max_initial_timestamp,
+            )
+            if result.primary_error:
                 diagnostics.write_event(
-                    "asr_error", stage="primary", beam_size=beam_size, error=repr(error)
+                    "asr_error",
+                    stage="primary",
+                    beam_size=beam_size,
+                    error=repr(result.primary_error),
                 )
-                publish_result("status", f"ASR 首次推理失败，尝试轻量重试: {error}", "", None)
-                try:
-                    with asr_lock:
-                        words = asr.transcribe(
-                            audio,
-                            initial_prompt=build_asr_prompt(recent_context) or None,
-                            hotwords=matching_terms or None,
-                            beam_size=1,
-                            repetition_penalty=cfg.asr_repetition_penalty,
-                            max_initial_timestamp=cfg.asr_max_initial_timestamp,
-                        )
-                except Exception as retry_error:
+                if result.retry_error:
                     diagnostics.write_event(
-                        "asr_error", stage="retry", beam_size=1, error=repr(retry_error)
+                        "asr_error", stage="retry", beam_size=1,
+                        error=repr(result.retry_error),
                     )
-                    publish_result("status", f"ASR 重试失败，该音频片段未能识别: {retry_error}", "", None)
-                    return [], audio, audio_start
+                    publish_result(
+                        "status",
+                        t("status.asr_retry_failed", error=result.retry_error),
+                        "", None,
+                    )
+                    return [], result.audio, result.audio_start
+                publish_result(
+                    "status", t("status.asr_retry", error=result.primary_error), "", None
+                )
+            timed_words = result.words
             diagnostics.write_event(
                 "asr_result",
-                words=len(words),
+                glossary_version=result.glossary_version,
+                words=len(timed_words),
                 beam_size=beam_size,
-                seconds=round(asr.last_latency_seconds, 3),
-                audio_seconds=round(len(audio) / cfg.samplerate, 3),
+                seconds=round(result.latency_seconds, 3),
+                audio_seconds=round(result.audio_seconds, 3),
             )
-            timed_words = [
-                TimedWord(
-                    (audio_start / cfg.samplerate) + word.start,
-                    (audio_start / cfg.samplerate) + word.end,
-                    word.text,
-                    word.probability,
-                )
-                for word in words
-            ]
-            if asr.last_latency_seconds > cfg.asr_timeout_seconds and beam_size > 1:
+            if result.latency_seconds > cfg.asr_timeout_seconds and beam_size > 1:
                 publish_result(
                     "status",
-                    f"ASR 片段处理耗时 {asr.last_latency_seconds:.1f}s，超过延迟预算",
+                    t("status.asr_over_budget", seconds=result.latency_seconds),
                     "",
                     None,
                 )
-            # Padding is only recognition context. Do not let speech from the
-            # previous utterance leak into the current transcript.
-            timed_words = select_timed_words_for_target(
-                timed_words,
-                target_start / cfg.samplerate,
-                target_end / cfg.samplerate,
-                max_word_seconds=cfg.max_asr_word_duration_seconds,
-            )
-            issue = asr_output_issue(
-                timed_words,
-                max(0.0, (target_end - target_start) / cfg.samplerate),
-            )
+            issue = result.issue
             if issue:
                 diagnostics.increment_quality("asr_suspect_windows")
+                target_start = source_chunks[0].start_frame
+                target_end = source_chunks[-1].end_frame
                 suspect_asr_ranges.append(
                     (target_start / cfg.samplerate, target_end / cfg.samplerate)
                 )
@@ -524,11 +477,11 @@ def main():
                 )
                 publish_result(
                     "status",
-                    "检测到异常密集的 ASR 结果，已保留文本并标记待复核",
+                    t("status.asr_suspect"),
                     "",
                     None,
                 )
-            return timed_words, audio, audio_start
+            return timed_words, result.audio, result.audio_start
 
         def extract_sentence_audio(words):
             if not words:
@@ -622,7 +575,7 @@ def main():
                 except queue.Full:
                     with records_lock:
                         correction_pending.discard(index)
-                    publish_result("status", "纠错队列已满，暂缓本句延迟纠错", "", None)
+                    publish_result("status", t("status.correction_queue_full"), "", None)
                     continue
                 correction_candidates.remove(candidate)
 
@@ -688,6 +641,19 @@ def main():
                 if not isinstance(chunk, AudioChunk):
                     continue
 
+                with glossary_snapshot_lock:
+                    terminology.poll_files()
+                    glossary_snapshot = terminology.apply_pending()
+                    glossary_snapshot_state["snapshot"] = glossary_snapshot
+                    if terminology.last_reload_error or terminology.last_update_error:
+                        diagnostics.write_event(
+                            "glossary_update_rejected",
+                            error=repr(terminology.last_reload_error or terminology.last_update_error),
+                            glossary_version=glossary_snapshot.version,
+                        )
+                        terminology.last_reload_error = None
+                        terminology.last_update_error = None
+
                 if time.monotonic() - last_history_flush >= cfg.history_flush_seconds:
                     save_history_file()
                     write_timestamped_history()
@@ -714,7 +680,7 @@ def main():
                     committed_until_frame = chunk.start_frame
                     last_chunk_end_frame = chunk.end_frame
                     publish_live_reset()
-                    publish_result("status", f"音频流出现第 {audio_gap_count} 个间隙", "", None)
+                    publish_result("status", t("status.audio_gap", count=audio_gap_count), "", None)
                 with records_lock:
                     storage_full = len(records) >= cfg.max_stored_records
                 if storage_full:
@@ -740,8 +706,8 @@ def main():
 
                 with records_lock:
                     recent_context = meeting_context.asr_prompt_context()
-                recent_context = terminology.normalize_source(recent_context)
-                matched_terms = terminology.asr_prompt(
+                recent_context = glossary_snapshot.normalize_source(recent_context)
+                matched_terms = glossary_snapshot.asr_prompt(
                     recent_context,
                     max_terms=cfg.asr_glossary_prompt_terms,
                     include_always=False,
@@ -758,7 +724,7 @@ def main():
                     last_backlog_warning = time.monotonic()
                     publish_result(
                         "status",
-                        f"音频积压约 {backlog_seconds:.1f} 秒，正在追赶实时内容",
+                        t("status.audio_backlog", seconds=backlog_seconds),
                         "",
                         None,
                     )
@@ -810,7 +776,7 @@ def main():
                                         max_initial_timestamp=cfg.asr_max_initial_timestamp,
                                     )
                             except Exception as error:
-                                publish_result("status", f"实时预览识别失败，正式识别继续: {error}", "", None)
+                                publish_result("status", t("status.preview_asr_failed", error=error), "", None)
                                 p_words = []
                             p_text = clean_repetitions(words_to_text(p_words))
                             preview_issue = asr_output_issue(
@@ -834,7 +800,7 @@ def main():
                             ):
                                 p_text = ""
                             if p_text and is_asr_anomaly(p_text):
-                                publish_result("status", "实时识别检测到重复循环，已抑制异常预览", "", None)
+                                publish_result("status", t("status.preview_loop_suppressed"), "", None)
                                 p_text = ""
                             if p_text:
                                 if p_text != last_preview_text:
@@ -853,7 +819,7 @@ def main():
                                             live_translation_queue,
                                         )
 
-                    # 超长语音防溢出保护：若说话人连续说话超8.5秒未停顿，在标点/意群处拆分
+                    # Bound continuous speech and split at punctuation or phrase boundaries.
                     force_interval = int(2.0 * cfg.samplerate)
                     force_due = (
                         last_forced_transcription_end is None
@@ -909,11 +875,24 @@ def main():
                                     stable_preview_text = ""
                                     publish_live_reset()
                                 else:
-                                    publish_result("status", "检测到语音片段，等待更多上下文", "", None)
+                                    publish_result("status", t("status.waiting_context"), "", None)
                         last_preview_text = ""
 
                 else:
-                    # 静音切片：通过气口检测自然结句
+                    with glossary_snapshot_lock:
+                        terminology.poll_files()
+                        updated_snapshot = terminology.apply_pending()
+                        glossary_snapshot_state["snapshot"] = updated_snapshot
+                        if terminology.last_reload_error or terminology.last_update_error:
+                            diagnostics.write_event(
+                                "glossary_update_rejected",
+                                error=repr(terminology.last_reload_error or terminology.last_update_error),
+                                glossary_version=updated_snapshot.version,
+                            )
+                            terminology.last_reload_error = None
+                            terminology.last_update_error = None
+                    glossary_snapshot = updated_snapshot
+                    # Use silence intervals to detect natural utterance boundaries.
                     if utterance_chunks:
                         # Retain the silence following speech as a tail pad. Quiet
                         # final words can otherwise be classified as silence.
@@ -923,7 +902,7 @@ def main():
                         silence_duration = silence_consecutive_chunks * (len(chunk.data) / cfg.samplerate)
                         current_duration = sum(len(c.data) for c in utterance_chunks) / cfg.samplerate
 
-                        # 气口自然停顿达标（>=0.8秒）且语音有效（>=0.35秒）
+                        # Finalize after sufficient silence when the utterance is long enough.
                         if silence_duration >= cfg.vad_pause_seconds and current_duration >= 0.35:
                             timed_words, full_audio, _ = transcribe_utterance(
                                 utterance_chunks, current_beam
@@ -975,13 +954,13 @@ def main():
                                         cfg.vad_pause_seconds * 2,
                                     ):
                                         silence_consecutive_chunks = 0
-                                        publish_result("status", "检测到未完成词，延长等待语音", "", None)
+                                        publish_result("status", t("status.waiting_speech"), "", None)
                                         continue
                                     utterance_chunks = trim_trailing_silence_chunks(
                                         utterance_chunks, silence_consecutive_chunks
                                     )
                                     silence_consecutive_chunks = 0
-                                    publish_result("status", "检测到未完成片段，等待后续语音", "", None)
+                                    publish_result("status", t("status.waiting_continuation"), "", None)
                                     continue
                                 if pending_words and finalized_groups:
                                     remaining_start = int(pending_words[0].start * cfg.samplerate)
@@ -1010,7 +989,7 @@ def main():
                                     silence_consecutive_chunks = 0
                                     waiting_for_continuation = True
                                     waiting_since = time.monotonic()
-                                    publish_result("status", "检测到语音片段，等待更多上下文", "", None)
+                                    publish_result("status", t("status.waiting_context"), "", None)
                             else:
                                 utterance_chunks = trim_trailing_silence_chunks(
                                     utterance_chunks, silence_consecutive_chunks
@@ -1018,37 +997,46 @@ def main():
                                 silence_consecutive_chunks = 0
                                 waiting_for_continuation = True
                                 waiting_since = time.monotonic()
-                                publish_result("status", "暂未识别到清晰语音，等待后续内容", "", None)
+                                publish_result("status", t("status.no_clear_speech"), "", None)
 
         except Exception as error:
-            report_thread_error("语音识别", error)
+            try:
+                report_thread_error(t("worker.asr"), error)
+            except Exception:
+                pass
+            capture_stop_event.set()
         finally:
-            if utterance_chunks:
-                timed_words, full_audio, _ = transcribe_utterance(utterance_chunks, 1)
-                if full_audio is not None and len(full_audio) >= int(0.3 * cfg.samplerate):
-                    timed_words = filter_uncommitted_words(
-                        timed_words, committed_until_frame / cfg.samplerate
-                    )
-                    completed, tail = split_timed_sentences(timed_words)
-                    for sentence_words in completed:
-                        if is_recordable_sentence(words_to_text(sentence_words)):
-                            record = add_history_sentence(
-                                sentence_words, extract_sentence_audio(sentence_words)
-                            )
-                            schedule_correction(record, sentence_words)
-                    if tail and should_finalize_after_waiting_timeout(tail):
-                        record = add_history_sentence(tail, extract_sentence_audio(tail))
-                        schedule_correction(record, tail)
-                    if timed_words:
-                        committed_until_frame = max(
-                            committed_until_frame,
-                            int(timed_words[-1].end * cfg.samplerate),
+            try:
+                if utterance_chunks:
+                    timed_words, full_audio, _ = transcribe_utterance(utterance_chunks, 1)
+                    if full_audio is not None and len(full_audio) >= int(0.3 * cfg.samplerate):
+                        timed_words = filter_uncommitted_words(
+                            timed_words, committed_until_frame / cfg.samplerate
                         )
-            enqueue_ready_corrections(force=True)
-            asr_done_event.set()
-            if stop_event.is_set():
-                capture_done_event.set()
-            worker_done_event.set()
+                        completed, tail = split_timed_sentences(timed_words)
+                        for sentence_words in completed:
+                            if is_recordable_sentence(words_to_text(sentence_words)):
+                                record = add_history_sentence(
+                                    sentence_words, extract_sentence_audio(sentence_words)
+                                )
+                                schedule_correction(record, sentence_words)
+                        if tail and should_finalize_after_waiting_timeout(tail):
+                            record = add_history_sentence(tail, extract_sentence_audio(tail))
+                            schedule_correction(record, tail)
+                        if timed_words:
+                            committed_until_frame = max(
+                                committed_until_frame,
+                                int(timed_words[-1].end * cfg.samplerate),
+                            )
+                enqueue_ready_corrections(force=True)
+            except Exception as error:
+                try:
+                    report_thread_error(t("worker.asr"), error)
+                except Exception:
+                    pass
+            finally:
+                asr_done_event.set()
+                worker_done_event.set()
 
     def correction_worker():
         try:
@@ -1079,7 +1067,7 @@ def main():
                             expected_version,
                         ):
                             continue
-                    # 优先保证实时识别流畅，若有实时音频等待则先让步
+                    # Yield to live audio when the capture queue is backed up.
                     wait_started = time.monotonic()
                     while (
                         not stop_event.is_set()
@@ -1088,7 +1076,9 @@ def main():
                     ):
                         time.sleep(0.05)
 
-                    asr_prompt = terminology.asr_prompt(
+                    with glossary_snapshot_lock:
+                        glossary_snapshot = glossary_snapshot_state["snapshot"]
+                    asr_prompt = glossary_snapshot.asr_prompt(
                         prompt,
                         max_terms=cfg.asr_glossary_prompt_terms,
                         include_always=False,
@@ -1106,6 +1096,7 @@ def main():
                         )
                     diagnostics.write_event(
                         "asr_correction",
+                        glossary_version=getattr(glossary_snapshot, "version", 0),
                         index=index,
                         seconds=round(time.monotonic() - correction_started, 3),
                         words=len(corrected_words),
@@ -1130,7 +1121,9 @@ def main():
                     else:
                         corrected = words_to_text(corrected_words)
 
-                    corrected = terminology.normalize_source(clean_repetitions(corrected))
+                    corrected = glossary_snapshot.normalize_source(
+                        clean_repetitions(corrected)
+                    )
                     corrected_target_words = (
                         range_words
                         if target_start is not None and target_end is not None and target_end > target_start
@@ -1141,16 +1134,34 @@ def main():
                         if word.probability is not None
                     ]
                     original = expected_original
+                    correction_rejection_reason = None
                     if (
-                        is_recordable_sentence(corrected)
-                        and correction_is_usable(original, corrected)
-                        and correction_is_confident(
-                            original,
-                            corrected,
-                            original_confidences,
-                            corrected_confidences,
+                        target_start is not None
+                        and target_end is not None
+                        and not correction_matches_target_range(
+                            corrected_target_words,
+                            target_start / cfg.samplerate,
+                            target_end / cfg.samplerate,
                         )
-                        and not is_asr_anomaly(corrected)
+                    ):
+                        correction_rejection_reason = "correction_outside_target_range"
+                    elif not correction_is_bounded(original, corrected):
+                        correction_rejection_reason = "correction_output_expanded"
+                    elif not is_recordable_sentence(corrected):
+                        correction_rejection_reason = "correction_not_recordable"
+                    elif not correction_is_usable(original, corrected):
+                        correction_rejection_reason = "correction_not_usable"
+                    elif not correction_is_confident(
+                        original,
+                        corrected,
+                        original_confidences,
+                        corrected_confidences,
+                    ):
+                        correction_rejection_reason = "correction_confidence_not_improved"
+                    elif is_asr_anomaly(corrected):
+                        correction_rejection_reason = "correction_asr_anomaly"
+                    if (
+                        correction_rejection_reason is None
                     ):
                         changed = False
                         with records_lock:
@@ -1206,29 +1217,56 @@ def main():
                                 version=metadata["version"],
                             )
                             if not enqueue_translation(index):
-                                publish_result("status", "修正句翻译任务未能入队", "", None)
+                                publish_result("status", t("status.corrected_translation_queue_full"), "", None)
+                    elif correction_rejection_reason:
+                        diagnostics.write_event(
+                            "asr_correction_rejected",
+                            index=index,
+                            reason=correction_rejection_reason,
+                            original_words=len(re.findall(r"[A-Za-z0-9']+", original)),
+                            candidate_words=len(re.findall(r"[A-Za-z0-9']+", corrected)),
+                            original=original,
+                            candidate=corrected,
+                            target_start=(
+                                round(target_start / cfg.samplerate, 3)
+                                if target_start is not None else None
+                            ),
+                            target_end=(
+                                round(target_end / cfg.samplerate, 3)
+                                if target_end is not None else None
+                            ),
+                        )
                 except Exception as error:
                     diagnostics.write_event(
                         "asr_error", stage="correction", index=index, error=repr(error)
                     )
                     publish_result(
-                        "status", f"第 {index + 1} 句延迟纠错失败，保留原转写: {error}", "", None
+                        "status",
+                        t("status.correction_failed", index=index + 1, error=error),
+                        "",
+                        None,
                     )
                 finally:
                     with records_lock:
                         correction_pending.discard(index)
         except Exception as error:
-            report_thread_error("语音纠错", error)
+            try:
+                report_thread_error(t("worker.correction"), error)
+            except Exception:
+                pass
         finally:
             correction_done_event.set()
 
     def translation_worker():
         try:
             while (
-                not asr_done_event.is_set()
-                or not correction_done_event.is_set()
-                or not history_translation_queue.empty()
-                or not live_translation_queue.empty()
+                not translation_failed_event.is_set()
+                and (
+                    not asr_done_event.is_set()
+                    or not correction_done_event.is_set()
+                    or not history_translation_queue.empty()
+                    or not live_translation_queue.empty()
+                )
             ):
                 try:
                     live_job = live_translation_queue.get_nowait()
@@ -1269,7 +1307,7 @@ def main():
                             revision=revision,
                             error=repr(error),
                         )
-                        publish_result("status", f"实时中文翻译失败: {error}", "", None)
+                        publish_result("status", t("status.live_translation_failed", error=error), "", None)
                     continue
                 try:
                     index = history_translation_queue.get(timeout=0.2)
@@ -1331,7 +1369,7 @@ def main():
                         diagnostics.increment_quality("translation_quality_retries")
                         publish_result(
                             "status",
-                            f"第 {index + 1} 句翻译质量检查提示: {', '.join(issues)}",
+                            t("status.translation_warning", index=index + 1, issues=", ".join(issues)),
                             "",
                             None,
                         )
@@ -1343,7 +1381,7 @@ def main():
                                 diagnostics.increment_quality("translation_retry_failures")
                                 publish_result(
                                     "status",
-                                    f"第 {index + 1} 句增强翻译重试失败: {error}",
+                                    t("status.translation_retry_failed", index=index + 1, error=error),
                                     "",
                                     None,
                                 )
@@ -1387,8 +1425,7 @@ def main():
                     if remaining_issues:
                         publish_result(
                             "status",
-                            f"第 {index + 1} 句增强翻译后仍有质量告警，已标记待复核: "
-                            f"{', '.join(remaining_issues)}",
+                            t("status.translation_unresolved", index=index + 1, issues=", ".join(remaining_issues)),
                             "",
                             None,
                         )
@@ -1419,7 +1456,7 @@ def main():
                         if translator.last_latency_seconds > cfg.translation_timeout_seconds:
                             publish_result(
                                 "status",
-                                f"第 {index + 1} 句翻译耗时 {translator.last_latency_seconds:.1f}s，已输出当前结果",
+                                t("status.translation_over_budget", index=index + 1, seconds=translator.last_latency_seconds),
                                 "",
                                 None,
                             )
@@ -1447,111 +1484,80 @@ def main():
                     )
                     publish_result(
                         "status",
-                        f"第 {index + 1} 句翻译失败，英文记录已保留: {error}",
+                        t("status.translation_failed", index=index + 1, error=error),
                         "",
                         None,
                     )
         except Exception as error:
-            report_thread_error("翻译工作线程", error)
+            try:
+                report_thread_error(t("worker.translation"), error)
+            except Exception:
+                pass
 
-    capture_thread = threading.Thread(target=capture_worker, name="audio-capture", daemon=True)
-    worker_thread = threading.Thread(target=worker, name="asr-worker", daemon=True)
-    correction_thread = threading.Thread(target=correction_worker, name="correction-worker", daemon=True)
-    translation_thread = threading.Thread(target=translation_worker, name="translation-worker", daemon=True)
-    capture_thread.start()
-    worker_thread.start()
-    correction_thread.start()
-    translation_thread.start()
+    worker_runtime = WorkerRuntime(report_thread_error)
+    capture_thread = worker_runtime.start("audio-capture", capture_worker)
+    worker_thread = worker_runtime.start("asr-worker", worker)
+    correction_thread = worker_runtime.start("correction-worker", correction_worker)
+    translation_thread = worker_runtime.start("translation-worker", translation_worker)
     capture_started_at = time.monotonic()
     audio_started_at = capture_started_at
 
     def refresh():
-        processed = 0
-        while processed < 100:
-            try:
-                event, first, second, fourth, event_version = result_queue.get_nowait()
-            except queue.Empty:
-                break
-            result_queue.task_done()
-            processed += 1
-            if event == "english":
-                overlay.append_english(first)
-                overlay.update_current(first, "")
-            elif event == "history_add":
-                visible_index = first - overlay.history_offset
-                if len(overlay.history) >= cfg.max_overlay_records:
-                    overlay.append_history(first, second, "", metadata=fourth)
-                elif visible_index < len(overlay.history):
-                    overlay.update_history_original(
-                        visible_index, second, metadata=fourth, version=event_version
-                    )
-                elif visible_index == len(overlay.history):
-                    overlay.append_history(first, second, "", metadata=fourth)
-                if fourth and fourth.get("review"):
-                    overlay.set_status("本句可能是识别片段，请复核")
-                else:
-                    overlay.set_status("正在翻译与识别...")
-            elif event == "history_update":
-                visible_index = first - overlay.history_offset
-                if visible_index >= 0:
-                    overlay.update_history(visible_index, second, version=fourth)
-                overlay.set_status(f"已翻译第 {first + 1} 句")
-            elif event == "history_original_update":
-                visible_index = first - overlay.history_offset
-                if visible_index >= 0:
-                    overlay.update_history_original(
-                        visible_index, second, metadata=fourth, version=event_version
-                    )
-                overlay.set_status(f"已二次修正第 {first + 1} 句转写")
-            elif event == "live_translation":
-                with live_state_lock:
-                    is_current = is_live_translation_current(
-                        live_state, first, fourth
-                    )
-                if is_current:
-                    overlay.update_current(fourth, second)
-            elif event == "live_reset":
-                overlay.update_current("", "")
-            elif event == "history_review":
-                visible_index = first - overlay.history_offset
-                if visible_index >= 0:
-                    overlay.mark_history_for_review(visible_index)
-                overlay.set_status(f"第 {first + 1} 句可能需要复核")
-            elif event == "status":
-                overlay.set_status(first)
-
         try:
-            name, error = error_queue.get_nowait()
-        except queue.Empty:
-            name = None
-        if name:
-            overlay.set_status(f"{name}线程异常: {error}")
-        if not overlay.closed:
-            overlay.refresh_after_id = overlay.root.after(100, refresh)
+            processed = 0
+            while processed < 100:
+                try:
+                    event, first, second, fourth, event_version = result_queue.get_nowait()
+                except queue.Empty:
+                    break
+                result_queue.task_done()
+                processed += 1
+                apply_result_event(
+                    overlay, cfg, (event, first, second, fourth, event_version),
+                    live_state, live_state_lock,
+                )
+
+            while True:
+                try:
+                    name, error = error_queue.get_nowait()
+                except queue.Empty:
+                    break
+                overlay.set_status(t("status.worker_failed", worker=name, error=error))
+        except Exception as error:
+            report_thread_error(t("worker.ui_refresh"), error)
+        finally:
+            if not overlay.closed:
+                try:
+                    overlay.refresh_after_id = overlay.root.after(100, refresh)
+                except Exception as error:
+                    report_thread_error(t("worker.ui_refresh"), error)
 
     overlay.refresh_after_id = overlay.root.after(100, refresh)
     try:
         overlay.run()
     finally:
         stop_event.set()
-        capture_thread.join()
+        capture_stop_event.set()
+        capture_thread.join(timeout=cfg.shutdown_join_timeout_seconds)
         capture_ended_at = time.monotonic()
         if getattr(overlay, "refresh_after_id", None):
             try:
                 overlay.root.after_cancel(overlay.refresh_after_id)
             except Exception:
                 pass
-        worker_thread.join()
-        correction_thread.join()
-        translation_thread.join()
+        unfinished_workers = worker_runtime.join_all(
+            timeout=cfg.shutdown_join_timeout_seconds
+        )
+        if unfinished_workers:
+            report_thread_error(
+                "shutdown",
+                RuntimeError("Workers did not stop in time: " + ", ".join(unfinished_workers)),
+            )
         audio_recorder.close()
         saved_records, _ = snapshot_records()
         write_timestamped_history()
         save_history_file()
-        stop_capture_warnings(warning_recorder)
-        print(
-            f"[main] 已保存 {len(saved_records)} 条记录、音频和文本到 {session_dir}。"
-        )
+        print(t("status.session_saved", count=len(saved_records), path=session_dir))
         diagnostics.write_event(
             "session_finished",
             records=len(saved_records),
@@ -1589,7 +1595,6 @@ def main():
             transcript_path=os.path.join(session_dir, cfg.history_file),
             audio_path=os.path.join(session_dir, cfg.audio_filename),
         )
-        diagnostics.flush_warning_summary()
 
 
 if __name__ == "__main__":

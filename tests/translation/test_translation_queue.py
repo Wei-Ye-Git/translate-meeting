@@ -1,3 +1,5 @@
+"""Live translation queue ordering tests."""
+
 import queue
 import unittest
 

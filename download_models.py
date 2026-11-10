@@ -1,4 +1,5 @@
 import os
+from i18n import t
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 from huggingface_hub import snapshot_download
@@ -46,4 +47,4 @@ if not os.path.isfile(os.path.join(ct2_opus_dir, "model.bin")):
         from convert_marian_to_ct2 import convert
         convert()
     except Exception as exc:
-        print(f"[warning] CTranslate2 自动转换跳过: {exc}")
+        print(t("log.ct2_conversion_skipped", error=exc))

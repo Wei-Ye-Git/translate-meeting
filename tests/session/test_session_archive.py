@@ -1,3 +1,5 @@
+"""Session audio and transcript persistence tests."""
+
 import os
 import tempfile
 import threading

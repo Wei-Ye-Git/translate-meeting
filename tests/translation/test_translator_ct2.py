@@ -1,3 +1,5 @@
+"""CTranslate2 backend tests."""
+
 import unittest
 from unittest.mock import MagicMock
 

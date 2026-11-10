@@ -1,3 +1,5 @@
+"""Meeting-context retention and filtering tests."""
+
 import unittest
 
 from meeting_context import MeetingContext

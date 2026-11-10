@@ -1,3 +1,5 @@
+"""Audio queue and operating mode tests."""
+
 import unittest
 import queue
 import threading

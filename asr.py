@@ -4,6 +4,7 @@ import time
 
 import numpy as np
 from faster_whisper import WhisperModel
+from i18n import t
 
 from text_processing import TimedWord
 
@@ -24,12 +25,13 @@ class ASR:
                  local_dir=None, cpu_threads=None):
         if not local_dir or not os.path.isfile(os.path.join(local_dir, "model.bin")):
             raise FileNotFoundError(
-                f"未找到本地 Whisper 模型: {local_dir}。请先运行 setup.bat 下载模型。"
+                t("error.local_whisper_missing", path=local_dir)
             )
         model_name = local_dir
         if cpu_threads is None:
             cpu_threads = min(8, max(2, (os.cpu_count() or 4) // 2))
-        print(f"[asr] 加载 Whisper: {model_name} ({device}/{compute_type}, threads={cpu_threads})")
+        print(t("log.whisper_loading", path=model_name, device=device,
+                compute_type=compute_type, threads=cpu_threads))
         self.model = WhisperModel(
             model_name,
             device=device,

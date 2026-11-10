@@ -27,6 +27,8 @@ class Config:
     translate_intra_threads: int = 2
     translate_inter_threads: int = 1
     terminology_file: str = "terminology.json"
+    default_terminology_file: str = "glossaries/general.json"
+    company_terminology_file: str = "glossaries/company-rib.json"
     overlay_alpha: float = 0.92
     font_size: int = 18
     history_file: str = "meeting_transcript.txt"

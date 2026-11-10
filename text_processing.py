@@ -153,6 +153,29 @@ def correction_is_usable(original, corrected):
     return len(corrected_words) >= minimum_words and len(corrected.strip()) >= minimum_chars
 
 
+def correction_is_bounded(original, corrected, max_growth=4, max_ratio=1.8):
+    """Reject contextual ASR output that expands far beyond its target sentence."""
+    original_count = len(re.findall(r"[A-Za-z0-9']+", original))
+    corrected_count = len(re.findall(r"[A-Za-z0-9']+", corrected))
+    if not original_count or not corrected_count:
+        return False
+    maximum = max(original_count + max_growth, int(original_count * max_ratio))
+    return corrected_count <= maximum
+
+
+def correction_matches_target_range(words, target_start, target_end, padding=0.25):
+    """Require contextual ASR words to stay near the sentence being corrected."""
+    if not words or target_end <= target_start:
+        return False
+    if any(word.end <= word.start for word in words):
+        return False
+    first_start = min(word.start for word in words)
+    last_end = max(word.end for word in words)
+    if first_start < target_start - padding or last_end > target_end + padding:
+        return False
+    return last_end - first_start <= target_end - target_start + padding * 2
+
+
 def correction_is_confident(original, corrected, original_confidences, corrected_confidences):
     original_text = re.sub(r"[^\w']+", " ", original).strip().lower()
     corrected_text = re.sub(r"[^\w']+", " ", corrected).strip().lower()
@@ -164,17 +187,59 @@ def correction_is_confident(original, corrected, original_confidences, corrected
         return False
     original_average = sum(original_scores) / len(original_scores)
     corrected_average = sum(corrected_scores) / len(corrected_scores)
-    return corrected_average >= original_average + 0.03
+    original_words = [word.lower() for word in original_text.split()]
+    corrected_words = [word.lower() for word in corrected_text.split()]
+    if original_words != corrected_words:
+        if len(original_scores) == len(original_words) and len(corrected_scores) == len(corrected_words):
+            changed_original = []
+            changed_corrected = []
+            for operation, start_a, end_a, start_b, end_b in SequenceMatcher(
+                None, original_words, corrected_words
+            ).get_opcodes():
+                if operation != "equal":
+                    changed_original.extend(original_scores[start_a:end_a])
+                    changed_corrected.extend(corrected_scores[start_b:end_b])
+            if (
+                not changed_corrected
+                or sum(changed_corrected) / len(changed_corrected) < 0.80
+                or changed_original
+                and (
+                    sum(changed_corrected) / len(changed_corrected)
+                    < sum(changed_original) / len(changed_original) + 0.08
+                )
+            ):
+                return False
+    # A wording change must have a material confidence gain. A tiny aggregate
+    # increase is not enough to overwrite an already plausible proper noun or
+    # content word (e.g. "business" -> "distance").
+    required_gain = 0.10 if original_words != corrected_words else 0.03
+    return corrected_average >= original_average + required_gain
 
 
-def should_schedule_correction(words, min_words=4, min_duration_seconds=0.8):
-    """Avoid contextual re-decoding of fragments too short to constrain ASR."""
+def should_schedule_correction(
+    words,
+    min_words=4,
+    min_duration_seconds=0.8,
+    high_confidence_threshold=0.92,
+    minimum_confidence=0.75,
+):
+    """Re-decode useful uncertain sentences, not already-clear ASR output."""
     if not words:
         return False
     text = words_to_text(words)
     word_count = len(re.findall(r"[A-Za-z0-9']+", text))
     duration = words[-1].end - words[0].start
-    return word_count >= min_words and duration >= min_duration_seconds
+    if word_count < min_words or duration < min_duration_seconds:
+        return False
+    confidences = [word.probability for word in words if word.probability is not None]
+    if (
+        len(confidences) == len(words)
+        and confidences
+        and min(confidences) >= minimum_confidence
+        and sum(confidences) / len(confidences) >= high_confidence_threshold
+    ):
+        return False
+    return True
 
 
 def has_valid_time_span(words, max_word_seconds=5.0, max_sentence_seconds=15.0):
@@ -476,3 +541,8 @@ def remove_sentence_overlap_words(previous, current, min_overlap=5):
         if previous_words[-size:] == current_words[:size]:
             return current[size:]
     return current
+
+
+def has_time_overlap(previous_end, current_start):
+    """Only use text-overlap deduplication when the ASR time spans overlap."""
+    return previous_end is not None and current_start < previous_end

@@ -4,6 +4,8 @@ import threading
 from collections import Counter
 from datetime import datetime, timezone
 
+from i18n import t
+
 
 class SessionQualityStats:
     """Thread-safe counters and high-water marks for session quality signals."""
@@ -40,6 +42,7 @@ class SessionDiagnostics:
         self._quality_stats.increment("translation_quality_unresolved", 0)
         self._quality_stats.increment("translation_context_fallbacks", 0)
         self._quality_stats.set_max("max_audio_backlog_seconds", 0.0)
+        self._disabled = False
 
     def increment_quality(self, name, amount=1):
         self._quality_stats.increment(name, amount)
@@ -51,6 +54,8 @@ class SessionDiagnostics:
         return self._quality_stats.snapshot()
 
     def write_event(self, event, **fields):
+        if self._disabled:
+            return False
         record = {
             "time": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             "event": event,
@@ -60,8 +65,14 @@ class SessionDiagnostics:
             with self._lock:
                 with open(self.path, "a", encoding="utf-8") as output:
                     output.write(json.dumps(record, ensure_ascii=False) + "\n")
+            return True
         except OSError as error:
-            print(f"[diagnostics] 无法写入诊断日志 {self.path}: {error}")
+            self._disabled = True
+            try:
+                print(t("error.diagnostics_write", path=self.path, error=error))
+            except Exception:
+                pass
+            return False
 
     def record_warning(self, category, message, filename, lineno, count=1):
         key = (category, message, os.path.basename(filename), lineno)
@@ -73,6 +84,17 @@ class SessionDiagnostics:
                 "source": os.path.basename(filename),
                 "line": lineno,
             }
+
+    def write_warning_observation(self, category, message, filename, lineno, count, observed_range):
+        self.write_event(
+            "warning_observation",
+            category=category,
+            message=message,
+            source=os.path.basename(filename),
+            line=lineno,
+            count=count,
+            **(observed_range or {}),
+        )
 
     def write_warning_summary(self, category, message, filename, lineno, count):
         self.write_event(

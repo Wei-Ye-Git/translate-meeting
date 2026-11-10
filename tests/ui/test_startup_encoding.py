@@ -1,4 +1,6 @@
 import os
+"""Console UTF-8 startup behavior tests."""
+
 import subprocess
 import sys
 import unittest

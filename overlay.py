@@ -1,11 +1,13 @@
 import tkinter as tk
 from tkinter import ttk
 
+from i18n import t
+
 
 class Overlay:
     def __init__(self, alpha=0.92, font_size=18, max_history_records=5000):
         self.root = tk.Tk()
-        self.root.title("实时英文字幕翻译")
+        self.root.title(t("app.title"))
         self.root.attributes("-alpha", alpha)
         self.root.configure(bg="#101216")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -37,33 +39,33 @@ class Overlay:
         header = tk.Frame(self.root, bg="#1b1e24")
         header.pack(fill="x")
         self.status = tk.Label(
-            header, text="正在等待音频...", fg="#99a2ad", bg="#1b1e24",
+            header, text=t("ui.waiting_audio"), fg="#99a2ad", bg="#1b1e24",
             font=("Microsoft YaHei UI", 10), anchor="w",
         )
         self.status.pack(side="left", padx=self.padding, pady=7)
         self.copy_bilingual_btn = tk.Button(
-            header, text="复制双语", command=self.copy_bilingual,
+            header, text=t("ui.copy_bilingual"), command=self.copy_bilingual,
             fg="#d7dde5", bg="#303640", activeforeground="#ffffff",
             activebackground="#48515e", relief="flat", borderwidth=0,
             font=("Microsoft YaHei UI", 9), padx=8, pady=3,
         )
         self.copy_bilingual_btn.pack(side="right", padx=(4, self.padding), pady=4)
         self.copy_btn = tk.Button(
-            header, text="复制英文", command=self.copy_english,
+            header, text=t("ui.copy_english"), command=self.copy_english,
             fg="#d7dde5", bg="#303640", activeforeground="#ffffff",
             activebackground="#48515e", relief="flat", borderwidth=0,
             font=("Microsoft YaHei UI", 9), padx=8, pady=3,
         )
         self.copy_btn.pack(side="right", padx=4, pady=4)
         self.top_toggle = tk.Button(
-            header, text="置顶", command=self.toggle_topmost,
+            header, text=t("ui.pin"), command=self.toggle_topmost,
             fg="#d7dde5", bg="#2c3340", activeforeground="#ffffff",
             activebackground="#414d60", relief="flat", borderwidth=0,
             font=("Microsoft YaHei UI", 9), padx=8, pady=3,
         )
         self.top_toggle.pack(side="right", padx=4, pady=4)
         tk.Label(
-            header, text="拖动窗口", fg="#68717d", bg="#1b1e24",
+            header, text=t("ui.drag_window"), fg="#68717d", bg="#1b1e24",
             font=("Microsoft YaHei UI", 9),
         ).pack(side="right", padx=4)
         for widget in (header, self.status):
@@ -76,7 +78,7 @@ class Overlay:
         history_frame.pack_propagate(False)
         history_frame.configure(height=230)
         tk.Label(
-            history_frame, text="历史记录（双语对照，向上滚动查看更早内容）", fg="#9ba5b2", bg="#20242b",
+            history_frame, text=t("ui.history_title"), fg="#9ba5b2", bg="#20242b",
             font=("Microsoft YaHei UI", 10), anchor="w",
         ).pack(fill="x", padx=10, pady=(7, 3))
 
@@ -107,7 +109,7 @@ class Overlay:
                            highlightbackground="#303640")
         current.pack(fill="x", padx=self.padding, pady=(0, self.padding))
         self.current_label = tk.Label(
-            current, text="实时预览（内容可能变化）", fg="#8994a1", bg="#101216",
+            current, text=t("ui.live_preview"), fg="#8994a1", bg="#101216",
             font=("Microsoft YaHei UI", 9), anchor="w",
         )
         self.current_label.pack(fill="x", padx=10, pady=(7, 0))
@@ -190,14 +192,14 @@ class Overlay:
             return
         en_tag = f"en_{index}"
         zh_tag = f"zh_{index}"
-        zh_display = translated if translated else "翻译中..."
+        zh_display = translated if translated else t("ui.translating")
         start = metadata.get("start")
         end = metadata.get("end")
         prefix = (
             f"[{self._format_timestamp(start)}-{self._format_timestamp(end)}] "
             if start is not None and end is not None else ""
         )
-        corrected = "[已修订] " if metadata.get("corrected") else ""
+        corrected = t("ui.corrected_marker") if metadata.get("corrected") else ""
         self.history_text.insert(
             "end", f"{prefix}{corrected}{original}\n", ("en", en_tag)
         )
@@ -241,7 +243,7 @@ class Overlay:
                 previous_original = self.history_metadata[index].get("previous_original")
                 previous_translation = self.history_metadata[index].get("previous_translation")
                 self.history_metadata[index] = dict(metadata)
-                if old_translation and old_translation != "翻译中...":
+                if old_translation and old_translation != t("ui.translating"):
                     self.history_metadata[index].setdefault(
                         "previous_translation", old_translation
                     )
@@ -260,12 +262,12 @@ class Overlay:
                 if start is not None and end is not None else ""
             )
             self.history_text.delete(ranges[0], ranges[1])
-            corrected = "[已修订] " if current_metadata.get("corrected") else ""
+            corrected = t("ui.corrected_marker") if current_metadata.get("corrected") else ""
             self.history_text.insert(
                 ranges[0], f"{prefix}{corrected}{original}\n", ("en", en_tag)
             )
         self.history_metadata[index]["version"] = new_version
-        self.update_history(index, "翻译中...", version=new_version)
+        self.update_history(index, t("ui.translating"), version=new_version)
         return True
 
     def mark_history_for_review(self, index):
@@ -283,10 +285,10 @@ class Overlay:
                 if start is not None and end is not None else ""
             )
             original = self.history[index][0]
-            corrected = "[已修订] " if metadata.get("corrected") else ""
+            corrected = t("ui.corrected_marker") if metadata.get("corrected") else ""
             self.history_text.delete(ranges[0], ranges[1])
             self.history_text.insert(
-                ranges[0], f"{prefix}[需要复核] {corrected}{original}\n", ("en", en_tag)
+                ranges[0], f"{prefix}{t('ui.review_marker')}{corrected}{original}\n", ("en", en_tag)
             )
         return True
 
@@ -301,18 +303,18 @@ class Overlay:
     def toggle_topmost(self):
         self.topmost = not self.topmost
         self.root.attributes("-topmost", self.topmost)
-        self.top_toggle.config(text="取消置顶" if self.topmost else "置顶")
-        self.set_status("窗口已置顶" if self.topmost else "窗口已取消置顶")
+        self.top_toggle.config(text=t("ui.unpin") if self.topmost else t("ui.pin"))
+        self.set_status(t("ui.window_pinned") if self.topmost else t("ui.window_unpinned"))
 
     def copy_bilingual(self):
         text = self.bilingual_text()
         if not text:
-            self.set_status("还没有可复制的历史记录")
+            self.set_status(t("ui.no_bilingual_history"))
             return
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.root.update()
-        self.set_status(f"已复制双语记录，共 {len(self.history)} 句")
+        self.set_status(t("ui.copied_bilingual", count=len(self.history)))
 
     def bilingual_text(self):
         lines = []
@@ -326,17 +328,17 @@ class Overlay:
                 f"[{self._format_timestamp(start)}-{self._format_timestamp(end)}] "
                 if start is not None and end is not None else ""
             )
-            review = "[需要复核] " if metadata.get("review") else ""
-            corrected = "[已修订] " if metadata.get("corrected") else ""
-            lines.append(f"{prefix}{review}{corrected}[EN] {original.strip()}")
+            review = t("ui.review_marker") if metadata.get("review") else ""
+            corrected = t("ui.corrected_marker") if metadata.get("corrected") else ""
+            lines.append(f"{prefix}{review}{corrected}{t('ui.english_label')}{original.strip()}")
             previous_original = metadata.get("previous_original")
             previous_translation = metadata.get("previous_translation")
             if previous_original:
-                lines.append(f"[EN - 修订前] {previous_original.strip()}")
+                lines.append(t("export.revision_english") + previous_original.strip())
             if previous_translation:
-                lines.append(f"[ZH - 修订前] {previous_translation.strip()}")
+                lines.append(t("export.revision_chinese") + previous_translation.strip())
             if translated and translated.strip():
-                lines.append(f"[ZH] {translated.strip()}")
+                lines.append(t("ui.chinese_label") + translated.strip())
             lines.append("")
         return "\n".join(lines).strip()
 
@@ -352,18 +354,18 @@ class Overlay:
                 f"[{self._format_timestamp(start)}-{self._format_timestamp(end)}] "
                 if start is not None and end is not None else ""
             )
-            review = "[需要复核] " if metadata.get("review") else ""
-            corrected = "[已修订] " if metadata.get("corrected") else ""
+            review = t("ui.review_marker") if metadata.get("review") else ""
+            corrected = t("ui.corrected_marker") if metadata.get("corrected") else ""
             lines.append(f"{prefix}{review}{corrected}{original.strip()}")
         records = lines
         text = "\n".join(records)
         if not text:
-            self.set_status("还没有可复制的英文记录")
+            self.set_status(t("ui.no_english_history"))
             return
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.root.update()
-        self.set_status(f"已复制全部英文转写，共 {len(records)} 句")
+        self.set_status(t("ui.copied_english", count=len(records)))
 
     def close(self):
         self.closed = True

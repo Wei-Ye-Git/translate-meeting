@@ -1,3 +1,5 @@
+"""Audio filtering tests."""
+
 import unittest
 
 import numpy as np

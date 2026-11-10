@@ -1,3 +1,5 @@
+"""Whisper decoding parameter and prompt tests."""
+
 import unittest
 from unittest.mock import MagicMock
 

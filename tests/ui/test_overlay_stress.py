@@ -1,3 +1,5 @@
+"""Overlay history, rendering, and boundedness tests."""
+
 import unittest
 from overlay import Overlay
 

@@ -1,6 +1,8 @@
+"""Meeting-context prompt selection tests."""
+
 import unittest
 
-from main import correction_prompt
+from correction_context import correction_prompt, correction_snapshot_is_current
 
 
 class TranslationContextTests(unittest.TestCase):
@@ -53,8 +55,6 @@ class TranslationContextTests(unittest.TestCase):
         self.assertEqual(prompt, "Earlier valid meeting context.")
 
     def test_correction_snapshot_rejects_a_changed_record_version(self):
-        from main import correction_snapshot_is_current
-
         self.assertFalse(
             correction_snapshot_is_current(
                 ["corrected text", ""], {"version": 2}, "original text", 1

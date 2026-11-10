@@ -10,7 +10,8 @@ import numpy as np
 from asr import ASR
 from audio_preprocess import highpass
 from config import Config
-from terminology import Terminology
+from i18n import t
+from terminology import TerminologyManager
 from text_processing import (
     TimedWord,
     clean_repetitions,
@@ -33,7 +34,7 @@ def iter_wav_chunks(path, chunk_seconds=8.5, overlap_seconds=0.35):
             or source.getsampwidth() != 2
             or source.getcomptype() != "NONE"
         ):
-            raise ValueError("回放 WAV 必须是 16 kHz、单声道、16-bit PCM")
+            raise ValueError(t("error.invalid_replay_audio"))
         chunk_frames = max(1, int(chunk_seconds * source.getframerate()))
         overlap_frames = min(
             max(0, int(overlap_seconds * source.getframerate())),
@@ -62,6 +63,18 @@ def write_jsonl_exclusive(path, records):
             output.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def audio_range_duration(path, start_seconds=0.0, duration_seconds=None):
+    with wave.open(path, "rb") as source:
+        total_seconds = source.getnframes() / source.getframerate()
+    start = min(total_seconds, max(0.0, start_seconds))
+    end = (
+        total_seconds
+        if duration_seconds is None
+        else min(total_seconds, start + max(0.0, duration_seconds))
+    )
+    return max(0.0, end - start)
+
+
 def build_replay_hotwords(terminology, context):
     return terminology.asr_prompt(
         " ".join(context[-4:]), include_always=False
@@ -71,7 +84,11 @@ def build_replay_hotwords(terminology, context):
 def replay(path, output_path, start_seconds=0.0, duration_seconds=None, beam_size=1):
     root = os.path.dirname(os.path.abspath(__file__))
     config = Config()
-    terminology = Terminology.from_file(os.path.join(root, config.terminology_file))
+    terminology = TerminologyManager.from_files([
+        os.path.join(root, config.default_terminology_file),
+        os.path.join(root, config.company_terminology_file),
+        os.path.join(root, config.terminology_file),
+    ])
     asr = ASR(
         config.whisper_model,
         config.whisper_device,
@@ -92,7 +109,7 @@ def replay(path, output_path, start_seconds=0.0, duration_seconds=None, beam_siz
     pending_words = []
     translation_context = []
     started = time.monotonic()
-    processed_audio_seconds = 0.0
+    processed_audio_seconds = audio_range_duration(path, start_seconds, duration_seconds)
     pending_asr_seconds = 0.0
 
     for window_start, audio in iter_wav_chunks(path):
@@ -109,8 +126,6 @@ def replay(path, output_path, start_seconds=0.0, duration_seconds=None, beam_siz
             audio = audio[:int((end_seconds - window_start) * 16000)]
         if not len(audio):
             continue
-        processed_audio_seconds += len(audio) / 16000
-
         asr_started = time.monotonic()
         words = asr.transcribe(
             highpass(audio, 16000),
@@ -149,6 +164,7 @@ def replay(path, output_path, start_seconds=0.0, duration_seconds=None, beam_siz
                 "end": round(group[-1].end, 3),
                 "en": english,
                 "zh": chinese,
+                "translation_issues": translator.quality_issues(english, chinese),
                 "asr_seconds": round(pending_asr_seconds if group_index == 0 else 0, 3),
                 "translation_seconds": round(translation_seconds, 3),
             })
@@ -169,6 +185,7 @@ def replay(path, output_path, start_seconds=0.0, duration_seconds=None, beam_siz
                 "end": round(pending_words[-1].end, 3),
                 "en": english,
                 "zh": chinese,
+                "translation_issues": translator.quality_issues(english, chinese),
                 "asr_seconds": round(pending_asr_seconds, 3),
                 "translation_seconds": round(time.monotonic() - translation_started, 3),
             })
@@ -189,15 +206,15 @@ def replay(path, output_path, start_seconds=0.0, duration_seconds=None, beam_siz
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    parser = argparse.ArgumentParser(description="用现有本地模型离线复测会议 WAV 片段")
+    parser = argparse.ArgumentParser(description=t("cli.replay_description"))
     parser.add_argument("wav", help="16 kHz mono 16-bit PCM WAV")
-    parser.add_argument("--output", required=True, help="新 JSONL 输出路径（不得已存在）")
-    parser.add_argument("--start", type=float, default=0.0, help="开始秒数")
-    parser.add_argument("--duration", type=float, help="复测秒数；省略则处理至文件结束")
+    parser.add_argument("--output", required=True, help=t("cli.output_help"))
+    parser.add_argument("--start", type=float, default=0.0, help=t("cli.start_help"))
+    parser.add_argument("--duration", type=float, help=t("cli.duration_help"))
     parser.add_argument("--beam-size", type=int, choices=(1, 2, 4), default=1)
     args = parser.parse_args()
     count = replay(args.wav, args.output, args.start, args.duration, args.beam_size)
-    print(f"已回放 {count} 条字幕；结果写入 {args.output}")
+    print(t("cli.replay_complete", count=count, path=args.output))
 
 
 if __name__ == "__main__":

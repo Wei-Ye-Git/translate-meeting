@@ -1,3 +1,5 @@
+"""Sentence boundary and context precision tests."""
+
 import unittest
 
 from text_processing import (

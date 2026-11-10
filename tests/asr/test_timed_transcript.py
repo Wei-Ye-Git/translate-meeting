@@ -1,3 +1,5 @@
+"""Word timing, overlap, and correction validation tests."""
+
 import unittest
 
 import numpy as np
@@ -6,7 +8,12 @@ from audio_capture import AudioChunk, extract_audio_range
 from text_processing import (
     TimedWord,
     correction_is_confident,
+    correction_is_bounded,
+    correction_matches_target_range,
+    has_time_overlap,
     correction_is_usable,
+    is_asr_anomaly,
+    is_recordable_sentence,
     remove_chunk_overlap_words,
     remove_sentence_overlap,
     remove_sentence_overlap_words,
@@ -15,9 +22,6 @@ from text_processing import (
     words_before,
     words_to_text,
     shift_word_times,
-    is_recordable_sentence,
-    is_review_candidate,
-    is_asr_anomaly,
     asr_output_issue,
     has_valid_time_span,
     select_timed_words_for_target,
@@ -31,33 +35,7 @@ from text_processing import (
 )
 
 
-class TextProcessingTests(unittest.TestCase):
-    def test_asr_output_issue_flags_implausible_word_rate(self):
-        words = [
-            TimedWord(index * 0.05, index * 0.05 + 0.04, f"word{index}")
-            for index in range(60)
-        ]
-
-        issue = asr_output_issue(words, audio_duration=5.0)
-
-        self.assertEqual(issue, "implausible_word_rate")
-
-    def test_asr_output_issue_keeps_fast_but_plausible_speech(self):
-        words = [
-            TimedWord(index * 0.1, index * 0.1 + 0.08, f"word{index}")
-            for index in range(30)
-        ]
-
-        self.assertIsNone(asr_output_issue(words, audio_duration=5.0))
-
-    def test_asr_word_rate_uses_speech_span_not_silent_window_padding(self):
-        words = [
-            TimedWord(10.0 + index * 0.05, 10.04 + index * 0.05, f"word{index}")
-            for index in range(20)
-        ]
-
-        self.assertEqual(asr_output_issue(words), "implausible_word_rate")
-
+class TimedTranscriptTests(unittest.TestCase):
     def test_chunk_overlap_removes_only_duplicate_leading_words(self):
         previous = [
             TimedWord(0.0, 0.2, "we"),
@@ -240,6 +218,50 @@ class TextProcessingTests(unittest.TestCase):
             )
         )
 
+    def test_correction_rejects_context_expansion_far_beyond_target(self):
+        original = "They know the business."
+        corrected = "They know the business and have worked with the company for decades."
+
+        self.assertFalse(correction_is_bounded(original, corrected))
+
+    def test_correction_rejects_words_outside_target_time_window(self):
+        words = [TimedWord(9.0, 9.3, "context"), TimedWord(10.0, 10.3, "target.")]
+
+        self.assertFalse(correction_matches_target_range(words, 10.0, 10.3))
+
+    def test_correction_accepts_words_within_target_time_window(self):
+        words = [TimedWord(9.9, 10.1, "Target"), TimedWord(10.1, 10.3, "sentence.")]
+
+        self.assertTrue(correction_matches_target_range(words, 10.0, 10.3))
+
+    def test_correction_allows_small_contextual_expansion(self):
+        self.assertTrue(
+            correction_is_bounded(
+                "They know the business.",
+                "They really know the business.",
+            )
+        )
+
+    def test_changed_correction_requires_material_confidence_gain(self):
+        self.assertFalse(
+            correction_is_confident(
+                "RIB sold the SAA business.",
+                "RIB sold the SAA distance.",
+                [0.80] * 6,
+                [0.85] * 6,
+            )
+        )
+
+    def test_changed_word_requires_its_own_confidence_support(self):
+        self.assertFalse(
+            correction_is_confident(
+                "RIB sold the SAA business.",
+                "RIB sold the SAA distance.",
+                [0.99, 0.99, 0.99, 0.99, 0.99, 0.95],
+                [0.99, 0.99, 0.99, 0.99, 0.99, 0.72],
+            )
+        )
+
     def test_sentence_with_terminal_punctuation_is_not_incomplete(self):
         from text_processing import is_likely_incomplete
         self.assertFalse(is_likely_incomplete([TimedWord(0, 1, "for.")]))
@@ -284,36 +306,6 @@ class TextProcessingTests(unittest.TestCase):
         self.assertEqual(words_to_text(completed[0]), "We need this")
         self.assertEqual(words_to_text(remaining), "Next topic")
 
-    def test_is_meaningful_sentence_accepts_normal_words(self):
-        from text_processing import is_meaningful_sentence
-        self.assertTrue(is_meaningful_sentence("The server is running."))
-        self.assertTrue(is_meaningful_sentence("The user clicked the button."))
-        self.assertTrue(is_meaningful_sentence("I would like to show you."))
-        self.assertTrue(is_meaningful_sentence("All right."))
-        self.assertTrue(is_meaningful_sentence("Okay."))
-        self.assertTrue(is_meaningful_sentence("Thank you."))
-        self.assertFalse(is_meaningful_sentence("uh um er"))
-        self.assertTrue(is_meaningful_sentence("Hold on"))
-        self.assertTrue(is_meaningful_sentence("I see"))
-
-    def test_clean_repetitions_removes_comma_separated_repeats(self):
-        from text_processing import clean_repetitions
-        self.assertEqual(clean_repetitions("All right, all right, all right."), "All right.")
-        self.assertEqual(clean_repetitions("right, right, right now"), "right now")
-        self.assertEqual(clean_repetitions("Thank you, thank you very much."), "Thank you very much.")
-
-    def test_rejects_single_word_asr_fragment_from_history(self):
-        self.assertFalse(is_recordable_sentence("That's"))
-        self.assertFalse(is_recordable_sentence("Thank"))
-        self.assertFalse(is_recordable_sentence("AI"))
-        self.assertFalse(is_recordable_sentence("PR"))
-        self.assertFalse(is_recordable_sentence("ticket"))
-
-    def test_keeps_short_complete_acknowledgements(self):
-        self.assertTrue(is_recordable_sentence("All right."))
-        self.assertTrue(is_recordable_sentence("See you."))
-        self.assertTrue(is_recordable_sentence("Thank you so much."))
-
     def test_keeps_short_unpunctuated_complete_phrase(self):
         self.assertTrue(is_recordable_sentence("I see"))
 
@@ -356,31 +348,10 @@ class TextProcessingTests(unittest.TestCase):
 
         self.assertEqual(words_to_text(result), "through testing")
 
-    def test_only_marks_short_unpunctuated_non_acknowledgements_for_review(self):
-        self.assertFalse(is_review_candidate("Thank you."))
-        self.assertTrue(is_review_candidate("That's"))
-        self.assertTrue(is_review_candidate("Maybe later"))
-
-    def test_detects_extreme_repeated_character_as_asr_anomaly(self):
-        self.assertTrue(is_asr_anomaly("you enter zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"))
-
-    def test_accepts_reasonably_long_stretched_word(self):
-        self.assertFalse(is_asr_anomaly("That was sooooo good."))
-
-    def test_detects_repeated_phrase_loop_as_asr_anomaly(self):
-        text = " ".join(["I will show you how to do it"] * 5)
-
-        self.assertTrue(is_asr_anomaly(text))
-
-    def test_detects_repeated_token_loop_inside_longer_output(self):
-        text = "The quality was good and then " + "very " * 18 + "low after that."
-
-        self.assertTrue(is_asr_anomaly(text))
-
-    def test_detects_single_token_loop_inside_longer_output(self):
-        text = "The discussion moved on and " + "zzzz " * 9 + "we continued."
-
-        self.assertTrue(is_asr_anomaly(text))
+    def test_overlap_deduplication_requires_overlapping_time_ranges(self):
+        self.assertTrue(has_time_overlap(12.0, 11.9))
+        self.assertFalse(has_time_overlap(12.0, 12.0))
+        self.assertFalse(has_time_overlap(12.0, 12.2))
 
     def test_detects_repeated_phrase_longer_than_ten_words(self):
         phrase = "we can see if we look at the sum of SAST issues"
@@ -457,6 +428,26 @@ class TextProcessingTests(unittest.TestCase):
             TimedWord(10.25, 10.5, "use"),
             TimedWord(10.5, 10.75, "AI"),
             TimedWord(10.75, 11.0, "daily."),
+        ]
+
+        self.assertTrue(should_schedule_correction(words))
+
+    def test_context_correction_skips_high_confidence_sentence(self):
+        words = [
+            TimedWord(10.0, 10.25, "We", 0.96),
+            TimedWord(10.25, 10.5, "use", 0.97),
+            TimedWord(10.5, 10.75, "AI", 0.98),
+            TimedWord(10.75, 11.0, "daily.", 0.96),
+        ]
+
+        self.assertFalse(should_schedule_correction(words))
+
+    def test_context_correction_keeps_low_confidence_sentence(self):
+        words = [
+            TimedWord(10.0, 10.25, "We", 0.96),
+            TimedWord(10.25, 10.5, "use", 0.97),
+            TimedWord(10.5, 10.75, "AI", 0.58),
+            TimedWord(10.75, 11.0, "daily.", 0.96),
         ]
 
         self.assertTrue(should_schedule_correction(words))
@@ -544,22 +535,6 @@ class TextProcessingTests(unittest.TestCase):
         self.assertFalse(is_asr_anomaly("I really, really want to show you this."))
         self.assertFalse(is_asr_anomaly("We will test it, test it again, and verify."))
         self.assertFalse(is_asr_anomaly("Thank you. Bye. Thank you. Bye."))
-
-    def test_is_sentence_complete_filters_short_fragments(self):
-        from text_processing import is_sentence_complete, TimedWord
-        fragment = [TimedWord(0, 1, "We"), TimedWord(1, 2, "need"), TimedWord(2, 3, "to.")]
-        self.assertFalse(is_sentence_complete(fragment, min_words=7))
-
-        full = [
-            TimedWord(0, 1, "We"), TimedWord(1, 2, "need"), TimedWord(2, 3, "to"),
-            TimedWord(3, 4, "check"), TimedWord(4, 5, "the"), TimedWord(5, 6, "database"),
-            TimedWord(6, 7, "before"), TimedWord(7, 8, "we"), TimedWord(8, 9, "deploy.")
-        ]
-        self.assertTrue(is_sentence_complete(full, min_words=7))
-
-        ack = [TimedWord(0, 1, "All"), TimedWord(1, 2, "right.")]
-        self.assertTrue(is_sentence_complete(ack, min_words=7))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,5 @@
+"""Offline audio replay tests."""
+
 import os
 import tempfile
 import unittest
@@ -5,7 +7,12 @@ import wave
 
 import numpy as np
 
-from replay_audio import build_replay_hotwords, iter_wav_chunks, write_jsonl_exclusive
+from replay_audio import (
+    audio_range_duration,
+    build_replay_hotwords,
+    iter_wav_chunks,
+    write_jsonl_exclusive,
+)
 from terminology import Terminology
 
 
@@ -49,6 +56,18 @@ class ReplayAudioTests(unittest.TestCase):
         self.assertEqual([chunk[0] for chunk in chunks], [0.0, 3 / 16000])
         self.assertEqual([len(chunk[1]) for chunk in chunks], [4, 2])
         self.assertAlmostEqual(float(chunks[0][1][1]), 0.5, places=4)
+
+    def test_audio_range_duration_does_not_count_overlap_windows_twice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fixture.wav")
+            with wave.open(path, "wb") as output:
+                output.setnchannels(1)
+                output.setsampwidth(2)
+                output.setframerate(16000)
+                output.writeframes(np.zeros(16000 * 10, dtype="<i2").tobytes())
+
+            self.assertEqual(audio_range_duration(path, 2.0, 3.0), 3.0)
+            self.assertEqual(audio_range_duration(path, 8.0, 5.0), 2.0)
 
     def test_refuses_to_overwrite_replay_output(self):
         with tempfile.TemporaryDirectory() as directory:

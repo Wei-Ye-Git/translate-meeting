@@ -2,14 +2,13 @@
 setlocal
 cd /d "%~dp0"
 
-rem Prefer Python 3.11, then 3.10. Python 3.9 is a fallback for older machines.
+rem Prefer the newest locally installed Python with compatible Windows wheels.
 set "PYTHON="
-py -3.11 --version >nul 2>&1 && set "PYTHON=py -3.11"
-if not defined PYTHON py -3.10 --version >nul 2>&1 && set "PYTHON=py -3.10"
-if not defined PYTHON py -3.9 --version >nul 2>&1 && set "PYTHON=py -3.9"
+py -3.14 --version >nul 2>&1 && set "PYTHON=py -3.14"
+if not defined PYTHON py -3.11 --version >nul 2>&1 && set "PYTHON=py -3.11"
 
 if not defined PYTHON (
-    echo Python 3.10, 3.11, or 3.9 was not found.
+    echo Python 3.14 or 3.11 was not found.
     echo Install Python from https://www.python.org/downloads/
     pause
     exit /b 1

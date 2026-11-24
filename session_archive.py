@@ -27,7 +27,8 @@ class AudioRecorder:
         samples = np.asarray(audio, dtype=np.float32)
         pcm = np.clip(samples, -1.0, 1.0)
         pcm = (pcm * 32767).astype("<i2")
-        self._wave.writeframesraw(pcm.tobytes())
+        self._wave.writeframes(pcm.tobytes())
+        self._wave._file.flush()
         self.frames_written += len(pcm)
 
     def write_silence(self, frames):
@@ -37,7 +38,8 @@ class AudioRecorder:
         silence = np.zeros(min(remaining, self.samplerate), dtype="<i2")
         while remaining:
             count = min(remaining, len(silence))
-            self._wave.writeframesraw(silence[:count].tobytes())
+            self._wave.writeframes(silence[:count].tobytes())
+            self._wave._file.flush()
             self.frames_written += count
             remaining -= count
 

@@ -86,7 +86,6 @@ def replay(path, output_path, start_seconds=0.0, duration_seconds=None, beam_siz
     config = Config()
     terminology = TerminologyManager.from_files([
         os.path.join(root, config.default_terminology_file),
-        os.path.join(root, config.company_terminology_file),
         os.path.join(root, config.terminology_file),
     ])
     asr = ASR(

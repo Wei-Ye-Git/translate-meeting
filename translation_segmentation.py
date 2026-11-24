@@ -2,9 +2,13 @@
 
 import re
 
+from i18n import data
+
 
 DEFAULT_MAX_TOKENS = 384
 DEFAULT_MIN_WORDS = 5
+_SEGMENT_JOIN_PUNCTUATION = data("translation.segment_join_punctuation")
+_SEGMENT_JOIN_SEPARATOR = data("translation.segment_join_separator")
 _CLAUSE_BOUNDARY = re.compile(
     r"(?<=[,;:])\s+|\s+(?=(?:and|but|because|while|which|that|although|however|therefore)\b)",
     re.IGNORECASE,
@@ -110,7 +114,7 @@ def join_translated_segments(parts):
     """Join separately translated clauses without injecting phrase-level spaces."""
     result = ""
     for part in (item.strip() for item in parts if item and item.strip()):
-        if result and result[-1] not in "，。！？；：,!?;:":
-            result += "，"
+        if result and result[-1] not in _SEGMENT_JOIN_PUNCTUATION:
+            result += _SEGMENT_JOIN_SEPARATOR
         result += part
     return result

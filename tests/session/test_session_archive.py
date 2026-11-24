@@ -38,6 +38,18 @@ class SessionArchiveTests(unittest.TestCase):
 
             self.assertEqual(samples.tolist(), [0, 16383, -16383])
 
+    def test_wav_header_tracks_audio_before_recorder_is_closed(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "meeting.wav")
+            recorder = AudioRecorder(path, samplerate=16000)
+            try:
+                recorder.write(np.array([0.0, 0.5, -0.5], dtype=np.float32))
+
+                with wave.open(path, "rb") as source:
+                    self.assertEqual(source.getnframes(), 3)
+            finally:
+                recorder.close()
+
     def test_writes_silence_and_counts_timeline_frames(self):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, "meeting.wav")

@@ -23,6 +23,11 @@ class LocalizationTests(unittest.TestCase):
         self.assertIn("不", markers)
         self.assertIn("没有", markers)
 
+    def test_translation_punctuation_rules_are_resource_data(self):
+        self.assertTrue(data("translation.chinese_sentence_end_punctuation"))
+        self.assertTrue(data("translation.segment_join_punctuation"))
+        self.assertTrue(data("translation.segment_join_separator"))
+
     def test_all_locale_files_are_valid_json_and_configured(self):
         root = os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

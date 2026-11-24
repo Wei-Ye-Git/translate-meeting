@@ -200,8 +200,9 @@ class Overlay:
             if start is not None and end is not None else ""
         )
         corrected = t("ui.corrected_marker") if metadata.get("corrected") else ""
+        review = t("ui.review_marker") if metadata.get("review") else ""
         self.history_text.insert(
-            "end", f"{prefix}{corrected}{original}\n", ("en", en_tag)
+            "end", f"{prefix}{review}{corrected}{original}\n", ("en", en_tag)
         )
         self.history_text.insert("end", f"{zh_display}\n\n", ("zh", zh_tag))
         if self.history_at_bottom:
@@ -213,6 +214,8 @@ class Overlay:
         metadata = self.history_metadata[index]
         if version is not None and version < metadata.get("version", 1):
             return False
+        if version is not None:
+            metadata["version"] = max(metadata.get("version", 1), version)
         if index < len(self.history):
             original, _ = self.history[index]
             self.history[index] = (original, translated)
@@ -263,11 +266,53 @@ class Overlay:
             )
             self.history_text.delete(ranges[0], ranges[1])
             corrected = t("ui.corrected_marker") if current_metadata.get("corrected") else ""
+            review = t("ui.review_marker") if current_metadata.get("review") else ""
             self.history_text.insert(
-                ranges[0], f"{prefix}{corrected}{original}\n", ("en", en_tag)
+                ranges[0], f"{prefix}{review}{corrected}{original}\n", ("en", en_tag)
             )
         self.history_metadata[index]["version"] = new_version
         self.update_history(index, t("ui.translating"), version=new_version)
+        return True
+
+    def update_history_window(self, updates):
+        """Apply a validated batch using one redraw to avoid row-by-row flashing."""
+        if not updates:
+            return False
+        current_view = self.history_text.yview()
+        was_at_bottom = self.history_at_bottom
+        changed = False
+        for item in updates:
+            index = item["record_id"] - self.history_offset
+            if not 0 <= index < len(self.history):
+                continue
+            current_metadata = self.history_metadata[index]
+            version = item["version"]
+            if version < current_metadata.get("version", 1):
+                continue
+            self.history[index] = (item["english"], item["chinese"])
+            metadata = dict(current_metadata)
+            metadata.update(item["metadata"])
+            self.history_metadata[index] = metadata
+            changed = True
+        if changed:
+            self.replace_history(list(self.history))
+            if was_at_bottom:
+                self.history_text.see("end")
+            elif current_view:
+                self.history_text.yview_moveto(current_view[0])
+                self.history_at_bottom = False
+        return changed
+
+    def hold_history_translation(self, record_id):
+        index = record_id - self.history_offset
+        if not 0 <= index < len(self.history):
+            return False
+        self.history[index] = (self.history[index][0], "")
+        zh_tag = f"zh_{index}"
+        ranges = self.history_text.tag_ranges(zh_tag)
+        if ranges:
+            self.history_text.delete(ranges[0], ranges[1])
+            self.history_text.insert(ranges[0], f"{t('ui.translating')}\n\n", ("zh", zh_tag))
         return True
 
     def mark_history_for_review(self, index):

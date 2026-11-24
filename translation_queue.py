@@ -1,4 +1,31 @@
+import collections
 import queue
+import threading
+import time
+
+
+class PendingHistoryTranslations:
+    """FIFO of committed record IDs, coalescing repeated requests before decode."""
+
+    def __init__(self):
+        self._pending = collections.OrderedDict()
+        self._lock = threading.Lock()
+
+    def add(self, index):
+        with self._lock:
+            if index not in self._pending:
+                self._pending[index] = (time.monotonic(), time.monotonic())
+
+    def take(self):
+        with self._lock:
+            if not self._pending:
+                return None
+            index, (enqueued_at, _) = self._pending.popitem(last=False)
+            return index, enqueued_at
+
+    def __len__(self):
+        with self._lock:
+            return len(self._pending)
 
 
 def publish_live_translation(text, min_words, state, pending):

@@ -1,0 +1,705 @@
+{
+  "AI": {
+    "target": "AI",
+    "aliases": ["大赦国际", "人工智能"],
+    "asr_variants": ["A I", "A. I."]
+  },
+  "API": {
+    "target": "API",
+    "aliases": ["应用程序接口", "应用程序编程接口"],
+    "asr_variants": ["A P I"]
+  },
+  "acceptance test-driven development": {
+    "target": "验收测试驱动开发（ATDD）",
+    "aliases": ["验收测试驱动的开发"],
+    "asr_variants": ["acceptance test driven development", "A T D D"]
+  },
+  "accessibility testing": {
+    "target": "无障碍测试",
+    "aliases": ["可访问性测试", "辅助功能测试"]
+  },
+  "component testing": {
+    "target": "组件测试",
+    "aliases": ["组件化测试", "构件测试"]
+  },
+  "continuous delivery": {
+    "target": "持续交付",
+    "aliases": ["连续交付"],
+    "asr_variants": ["continuous deliveries"]
+  },
+  "continuous deployment": {
+    "target": "持续部署",
+    "aliases": ["连续部署"],
+    "asr_variants": ["continuous deployments"]
+  },
+  "continuous integration": {
+    "target": "持续集成",
+    "aliases": ["连续集成"],
+    "asr_variants": ["continuous integrations"]
+  },
+  "continuous testing": {
+    "target": "持续测试",
+    "aliases": ["连续测试"]
+  },
+  "browser testing": {
+    "target": "浏览器测试",
+    "aliases": ["浏览器端测试", "浏览器考试"]
+  },
+  "cross-browser testing": {
+    "target": "跨浏览器测试",
+    "aliases": ["跨浏览器兼容测试", "交叉浏览器测试"]
+  },
+  "DevSecOps": {
+    "target": "DevSecOps（开发安全运维）",
+    "aliases": ["开发安全运维", "开发运维安全"]
+  },
+  "shift left": {
+    "target": "左移",
+    "aliases": ["左移策略", "向左移动"]
+  },
+  "shift-left testing": {
+    "target": "测试左移",
+    "aliases": ["左移测试", "向左移动测试"]
+  },
+  "test early": {
+    "target": "尽早测试",
+    "aliases": ["早期测试"]
+  },
+  "test-first development": {
+    "target": "测试先行开发",
+    "aliases": ["测试优先开发", "先测试后开发"]
+  },
+  "feedback loop": {
+    "target": "反馈回路",
+    "aliases": ["反馈循环"]
+  },
+  "continuous feedback": {
+    "target": "持续反馈",
+    "aliases": ["连续反馈"]
+  },
+  "fast feedback": {
+    "target": "快速反馈",
+    "aliases": ["快速回馈"]
+  },
+  "fail fast": {
+    "target": "快速失败",
+    "aliases": ["尽早失败", "快速故障"]
+  },
+  "PR": {
+    "target": "拉取请求",
+    "aliases": ["公关"],
+    "asr_variants": ["P R", "pull request", "pull requests"]
+  },
+  "prompt": {
+    "target": "提示词",
+    "asr_variants": ["prompts"]
+  },
+  "ticket": {
+    "target": "工单",
+    "aliases": ["机票", "门票"]
+  },
+  "unit test": {
+    "target": "单元测试",
+    "aliases": ["单位测试"],
+    "asr_variants": ["unit tests"]
+  },
+  "xUnit": {
+    "target": "xUnit",
+    "asr_variants": ["X unit", "X-unit"],
+    "asr_always": true
+  },
+  "NUnit": {
+    "target": "NUnit",
+    "asr_variants": ["N unit", "N-unit"],
+    "asr_always": true
+  },
+  "C#": {
+    "target": "C#",
+    "asr_variants": ["C sharp", "C-sharp"],
+    "asr_always": true
+  },
+  "assert": {
+    "target": "断言",
+    "asr_variants": ["asserts", "assertion"],
+    "asr_always": true
+  },
+  "automated testing": {
+    "target": "自动化测试",
+    "aliases": ["自动测试", "自动化考试"]
+  },
+  "test automation": {
+    "target": "测试自动化",
+    "aliases": ["自动化测试"]
+  },
+  "acceptance criteria": {
+    "target": "验收标准",
+    "aliases": ["接受标准"]
+  },
+  "behavior-driven development": {
+    "target": "行为驱动开发（BDD）",
+    "aliases": ["行为驱动的开发"],
+    "asr_variants": ["behavior driven development", "behaviour-driven development", "B D D"]
+  },
+  "alpha testing": {
+    "target": "阿尔法测试",
+    "aliases": ["Alpha 测试", "字母测试"]
+  },
+  "beta testing": {
+    "target": "贝塔测试",
+    "aliases": ["Beta 测试", "测试版测试"]
+  },
+  "action item": {
+    "target": "行动项",
+    "aliases": ["行动事项", "待办事项"],
+    "asr_variants": ["action items"]
+  },
+  "backlog": {
+    "target": "待办事项列表",
+    "aliases": ["积压工作"],
+    "asr_variants": ["backlogs"]
+  },
+  "black-box testing": {
+    "target": "黑盒测试",
+    "aliases": ["黑箱测试", "黑盒子测试"],
+    "asr_variants": ["black box testing"]
+  },
+  "white-box testing": {
+    "target": "白盒测试",
+    "aliases": ["白箱测试", "白盒子测试"],
+    "asr_variants": ["white box testing"]
+  },
+  "code review": {
+    "target": "代码审查",
+    "aliases": ["代码评审"]
+  },
+  "commit hook": {
+    "target": "提交钩子",
+    "aliases": ["提交挂钩", "提交钩子程序"],
+    "asr_variants": ["commit hooks"]
+  },
+  "compatibility testing": {
+    "target": "兼容性测试",
+    "aliases": ["兼容测试"]
+  },
+  "daily stand-up": {
+    "target": "每日站会",
+    "aliases": ["每日站立会议", "每日例会"],
+    "asr_variants": ["daily standup", "daily stand ups"]
+  },
+  "definition of done": {
+    "target": "完成定义",
+    "aliases": ["完成标准", "已完成的定义"]
+  },
+  "definition of ready": {
+    "target": "就绪定义",
+    "aliases": ["准备就绪的定义", "就绪标准"]
+  },
+  "end-to-end test": {
+    "target": "端到端测试",
+    "aliases": ["端对端测试", "端到端考试"],
+    "asr_variants": ["end to end test", "end-to-end tests"]
+  },
+  "exploratory testing": {
+    "target": "探索性测试",
+    "aliases": ["探索测试", "探测性测试"]
+  },
+  "flaky test": {
+    "target": "不稳定测试",
+    "aliases": ["偶发失败的测试", "不可靠测试"],
+    "asr_variants": ["flaky tests"]
+  },
+  "functional testing": {
+    "target": "功能测试",
+    "aliases": ["功能性测试", "功能考试"]
+  },
+  "performance testing": {
+    "target": "性能测试",
+    "aliases": ["表现测试", "性能考试"]
+  },
+  "penetration testing": {
+    "target": "渗透测试",
+    "aliases": ["穿透测试", "渗透性测试"]
+  },
+  "fine-tuning": {
+    "target": "微调",
+    "aliases": ["精细调整", "微调训练"],
+    "asr_variants": ["fine tuning"]
+  },
+  "infrastructure as code": {
+    "target": "基础设施即代码（IaC）",
+    "aliases": ["代码化基础设施", "基础架构即代码"],
+    "asr_variants": ["infrastructure-as-code", "I A C"]
+  },
+  "git commit": {
+    "target": "Git 提交",
+    "aliases": ["Git 承诺", "Git 委托"],
+    "asr_variants": ["git commits"]
+  },
+  "integration test": {
+    "target": "集成测试",
+    "aliases": ["整合测试", "集成考试"],
+    "asr_variants": ["integration tests"]
+  },
+  "load testing": {
+    "target": "负载测试",
+    "aliases": ["负荷测试", "加载测试"]
+  },
+  "manual testing": {
+    "target": "手动测试",
+    "aliases": ["人工测试", "手工测试"]
+  },
+  "meeting minutes": {
+    "target": "会议纪要",
+    "aliases": ["会议记录", "会议分钟"]
+  },
+  "open-source software": {
+    "target": "开源软件",
+    "aliases": ["开放源代码软件", "开放源码软件"],
+    "asr_variants": ["open source software"]
+  },
+  "pair programming": {
+    "target": "结对编程",
+    "aliases": ["配对编程", "双人编程"]
+  },
+  "pre-commit hook": {
+    "target": "提交前钩子",
+    "aliases": ["预提交钩子", "提交前挂钩"],
+    "asr_variants": ["precommit hook", "pre-commit hooks"]
+  },
+  "pull request validation": {
+    "target": "拉取请求验证",
+    "aliases": ["拉取请求校验", "PR 验证"]
+  },
+  "pre-merge validation": {
+    "target": "合并前验证",
+    "aliases": ["合并前校验", "合并前检查"]
+  },
+  "quality gate": {
+    "target": "质量门禁",
+    "aliases": ["质量关卡", "质量闸门"],
+    "asr_variants": ["quality gates"]
+  },
+  "build break": {
+    "target": "构建失败",
+    "aliases": ["构建中断", "打破构建"]
+  },
+  "code smell": {
+    "target": "代码异味",
+    "aliases": ["代码味道", "代码气味"],
+    "asr_variants": ["code smells"]
+  },
+  "compiler warning": {
+    "target": "编译器警告",
+    "aliases": ["编译警告", "编译器警示"],
+    "asr_variants": ["compiler warnings"]
+  },
+  "code scanning": {
+    "target": "代码扫描",
+    "aliases": ["代码扫描检查"]
+  },
+  "software bill of materials": {
+    "target": "软件物料清单（SBOM）",
+    "aliases": ["软件材料清单", "软件物料列表"],
+    "asr_variants": ["software bills of materials", "S B O M"]
+  },
+  "license compliance": {
+    "target": "许可证合规",
+    "aliases": ["许可合规", "授权许可合规"]
+  },
+  "container scanning": {
+    "target": "容器扫描",
+    "aliases": ["容器安全扫描"]
+  },
+  "infrastructure as code scanning": {
+    "target": "基础设施即代码扫描",
+    "aliases": ["IaC 扫描", "基础设施代码扫描"]
+  },
+  "static code analysis": {
+    "target": "静态代码分析",
+    "aliases": ["静态代码检查", "静态源码分析"]
+  },
+  "linting": {
+    "target": "代码 lint 检查",
+    "aliases": ["代码风格检查", "代码静态检查"]
+  },
+  "contract testing": {
+    "target": "契约测试",
+    "aliases": ["合同测试", "合约测试"]
+  },
+  "consumer-driven contract testing": {
+    "target": "消费者驱动的契约测试（CDCT）",
+    "aliases": ["消费者驱动契约测试", "消费者驱动合同测试"]
+  },
+  "regression test": {
+    "target": "回归测试",
+    "aliases": ["回归考试"],
+    "asr_variants": ["regression tests"]
+  },
+  "security testing": {
+    "target": "安全测试",
+    "aliases": ["安全性测试", "安全考试"]
+  },
+  "smoke test": {
+    "target": "冒烟测试",
+    "aliases": ["烟雾测试", "冒烟考试"],
+    "asr_variants": ["smoke tests"]
+  },
+  "sanity testing": {
+    "target": "健全性测试",
+    "aliases": ["合理性测试", "常识测试"]
+  },
+  "stress testing": {
+    "target": "压力测试",
+    "aliases": ["应力测试", "压力考试"]
+  },
+  "test case": {
+    "target": "测试用例",
+    "aliases": ["测试案例"],
+    "asr_variants": ["test cases"]
+  },
+  "test environment": {
+    "target": "测试环境",
+    "asr_variants": ["test environments"]
+  },
+  "test fixture": {
+    "target": "测试夹具",
+    "aliases": ["测试固件"],
+    "asr_variants": ["test fixtures"],
+    "asr_always": true
+  },
+  "test framework": {
+    "target": "测试框架",
+    "aliases": ["测试架构"],
+    "asr_variants": ["test frameworks"],
+    "asr_always": true
+  },
+  "test harness": {
+    "target": "测试框架环境",
+    "aliases": ["测试工具架", "测试线束"],
+    "asr_variants": ["test harnesses"]
+  },
+  "test oracle": {
+    "target": "测试预言机",
+    "aliases": ["测试判定机制", "测试神谕"],
+    "asr_variants": ["test oracles"]
+  },
+  "test plan": {
+    "target": "测试计划",
+    "aliases": ["测试方案"],
+    "asr_variants": ["test plans"]
+  },
+  "test report": {
+    "target": "测试报告",
+    "aliases": ["测试报表"],
+    "asr_variants": ["test reports"]
+  },
+  "test runner": {
+    "target": "测试运行器",
+    "aliases": ["测试执行器", "测试跑步者"],
+    "asr_variants": ["test runners"]
+  },
+  "test suite": {
+    "target": "测试套件",
+    "aliases": ["测试集", "测试套装"],
+    "asr_variants": ["test suites"]
+  },
+  "test double": {
+    "target": "测试替身",
+    "aliases": ["测试替代品"],
+    "asr_variants": ["test doubles"]
+  },
+  "test-driven development": {
+    "target": "测试驱动开发（TDD）",
+    "aliases": ["测试驱动的开发", "测试驱动编程"],
+    "asr_variants": ["test driven development", "T D D"]
+  },
+  "test pyramid": {
+    "target": "测试金字塔",
+    "aliases": ["测试塔"]
+  },
+  "mutation testing": {
+    "target": "变异测试",
+    "aliases": ["突变测试", "变异分析测试"]
+  },
+  "mock object": {
+    "target": "模拟对象",
+    "aliases": ["模仿对象", "Mock 对象"],
+    "asr_variants": ["mock objects"]
+  },
+  "test stub": {
+    "target": "桩对象",
+    "aliases": ["存根对象", "存根"]
+  },
+  "fake object": {
+    "target": "伪造对象",
+    "aliases": ["假对象", "Fake 对象"],
+    "asr_variants": ["fake objects"]
+  },
+  "usability testing": {
+    "target": "可用性测试",
+    "aliases": ["易用性测试", "可用性考试"]
+  },
+  "test data": {
+    "target": "测试数据",
+    "aliases": ["测试资料", "考试数据"]
+  },
+  "boundary value analysis": {
+    "target": "边界值分析",
+    "aliases": ["边界价值分析"]
+  },
+  "repository": {
+    "target": "代码仓库",
+    "aliases": ["存储库", "代码库", "代码存储库"],
+    "asr_variants": ["repositories"]
+  },
+  "retrieval-augmented generation": {
+    "target": "检索增强生成",
+    "aliases": ["检索增强式生成", "检索增强生成技术"],
+    "asr_variants": ["retrieval augmented generation"]
+  },
+  "scope creep": {
+    "target": "范围蔓延",
+    "aliases": ["范围膨胀", "范围 creep"]
+  },
+  "secure coding": {
+    "target": "安全编码",
+    "aliases": ["安全编程", "安全性编码"]
+  },
+  "security champion": {
+    "target": "安全倡导者",
+    "aliases": ["安全冠军", "安全负责人"],
+    "asr_variants": ["security champions"]
+  },
+  "security by design": {
+    "target": "安全设计",
+    "aliases": ["设计即安全", "通过设计实现安全"]
+  },
+  "shift-left security": {
+    "target": "安全左移",
+    "aliases": ["左移安全", "向左移动安全"]
+  },
+  "static application security testing": {
+    "target": "静态应用程序安全测试（SAST）",
+    "aliases": ["静态应用安全测试", "静态应用程序安全性测试"],
+    "asr_variants": ["static application security tests", "S A S T"]
+  },
+  "dynamic application security testing": {
+    "target": "动态应用程序安全测试（DAST）",
+    "aliases": ["动态应用安全测试", "动态应用程序安全性测试"],
+    "asr_variants": ["dynamic application security tests", "D A S T"]
+  },
+  "interactive application security testing": {
+    "target": "交互式应用程序安全测试（IAST）",
+    "aliases": ["交互式应用安全测试"],
+    "asr_variants": ["interactive application security tests", "I A S T"]
+  },
+  "software composition analysis": {
+    "target": "软件成分分析（SCA）",
+    "aliases": ["软件组成分析", "软件组件分析"],
+    "asr_variants": ["software composition analyses", "S C A"]
+  },
+  "dependency scanning": {
+    "target": "依赖项扫描",
+    "aliases": ["依赖扫描", "依赖关系扫描"]
+  },
+  "dependency vulnerability": {
+    "target": "依赖项漏洞",
+    "aliases": ["依赖漏洞", "依赖项脆弱性"],
+    "asr_variants": ["dependency vulnerabilities"]
+  },
+  "vulnerability scanning": {
+    "target": "漏洞扫描",
+    "aliases": ["脆弱性扫描", "弱点扫描"]
+  },
+  "secret scanning": {
+    "target": "机密信息扫描",
+    "aliases": ["密钥扫描", "秘密扫描"]
+  },
+  "threat modeling": {
+    "target": "威胁建模",
+    "aliases": ["威胁模型设计", "威胁模型分析"]
+  },
+  "software supply chain": {
+    "target": "软件供应链",
+    "aliases": ["软件供给链"]
+  },
+  "shift-left approach": {
+    "target": "左移方法",
+    "aliases": ["左移方法论", "左移实践"]
+  },
+  "software feature": {
+    "target": "软件功能",
+    "aliases": ["软件特性", "软件特色"],
+    "asr_variants": ["software features"]
+  },
+  "system prompt": {
+    "target": "系统提示词",
+    "aliases": ["系统提示", "系统提示语"],
+    "asr_variants": ["system prompts"]
+  },
+  "technical debt": {
+    "target": "技术债务",
+    "aliases": ["技术债"],
+    "asr_variants": ["technical debts"]
+  },
+  "test coverage": {
+    "target": "测试覆盖率"
+  },
+  "user story": {
+    "target": "用户故事",
+    "aliases": ["用户案例", "用户情景"],
+    "asr_variants": ["user stories"]
+  },
+  "vector database": {
+    "target": "向量数据库",
+    "aliases": ["矢量数据库"],
+    "asr_variants": ["vector databases"]
+  },
+  "prompt engineering": {
+    "target": "提示工程",
+    "aliases": ["即时工程", "快速工程"],
+    "asr_variants": ["re-prompt engineering", "reprompt engineering"]
+  },
+  "plan mode": {
+    "target": "计划模式",
+    "aliases": ["规划模式"],
+    "asr_variants": ["planning mode"]
+  },
+  "context window": {
+    "target": "上下文窗口",
+    "aliases": ["上下文范围"],
+    "asr_variants": ["context windows"]
+  },
+  "guardrail": {
+    "target": "护栏机制",
+    "aliases": ["防护措施", "防护机制"],
+    "asr_variants": ["guardrails"]
+  },
+  "staged changes": {
+    "target": "暂存改动",
+    "aliases": ["暂存的更改", "已暂存的改动"],
+    "asr_variants": ["staged change"]
+  },
+  "agent loop": {
+    "target": "智能体循环",
+    "aliases": ["智能体循环机制"],
+    "asr_variants": ["agent loops"]
+  },
+  "context handoff": {
+    "target": "上下文交接",
+    "aliases": ["上下文移交"],
+    "asr_variants": ["context hand-offs", "context handoffs"]
+  },
+  "smart zone": {
+    "target": "智能区",
+    "aliases": ["高效区"]
+  },
+  "dumb zone": {
+    "target": "低效区",
+    "aliases": ["笨拙区"]
+  },
+  "pipeline": {
+    "target": "流水线",
+    "aliases": ["管道", "输油管"]
+  },
+  "Grafana": {
+    "target": "Grafana",
+    "aliases": ["格拉法纳", "格拉法那"],
+    "asr_variants": ["graphana"]
+  },
+  "K6": {
+    "target": "K6",
+    "aliases": ["关键六"],
+    "asr_variants": ["K six"]
+  },
+  "PowerPoint": {
+    "target": "PowerPoint",
+    "aliases": ["爪子点", "电源点"],
+    "asr_variants": ["power point", "paw point"]
+  },
+  "Teams": {
+    "target": "Teams",
+    "asr_variants": ["team meeting"]
+  },
+  "large language model": {
+    "target": "大语言模型",
+    "aliases": ["大型语言模型"],
+    "asr_variants": ["large language models", "LLM", "LLMs"]
+  },
+  "Copilot": {
+    "target": "Copilot",
+    "aliases": ["副驾驶"]
+  },
+  "product owner": {
+    "target": "产品负责人",
+    "aliases": ["产品拥有者", "产品所有者"]
+  },
+  "acceptance test": {
+    "target": "验收测试",
+    "aliases": ["验收考试"],
+    "asr_variants": ["acceptance tests"]
+  },
+  "building information modeling": {
+    "target": "建筑信息模型（BIM）",
+    "aliases": ["建筑信息建模", "建筑信息模型"],
+    "asr_variants": ["building information modelling"]
+  },
+  "BIM": {
+    "target": "BIM",
+    "aliases": ["建筑信息模型"]
+  },
+  "bill of quantities": {
+    "target": "工程量清单",
+    "asr_variants": ["bills of quantities", "BoQ", "BOQ"]
+  },
+  "cost estimation": {
+    "target": "成本估算",
+    "asr_variants": ["cost estimating"]
+  },
+  "procurement": {
+    "target": "采购"
+  },
+  "project controls": {
+    "target": "项目控制"
+  },
+  "change order": {
+    "target": "变更单",
+    "asr_variants": ["change orders"]
+  },
+  "request for information": {
+    "target": "信息请求（RFI）",
+    "asr_variants": ["requests for information"]
+  },
+  "manufacturing execution system": {
+    "target": "制造执行系统",
+    "aliases": ["制造操作系统"],
+    "asr_variants": ["manufacturing execution systems", "MES"]
+  },
+  "enterprise resource planning": {
+    "target": "企业资源计划（ERP）",
+    "asr_variants": ["enterprise resource planning system", "ERP"]
+  },
+  "commissioning": {
+    "target": "调试与投运"
+  },
+  "prefabrication": {
+    "target": "预制化",
+    "asr_variants": ["prefabricated"]
+  },
+  "GitHub Copilot": {
+    "target": "GitHub Copilot",
+    "asr_variants": ["GitHub co-pilot", "GitHub co pilot"]
+  },
+  "OpenCode": {
+    "target": "OpenCode",
+    "asr_variants": ["Open Code"]
+  },
+  "input token": {
+    "target": "输入令牌",
+    "asr_variants": ["input tokens"]
+  },
+  "output token": {
+    "target": "输出令牌",
+    "asr_variants": ["output tokens"]
+  }
+}

@@ -11,6 +11,7 @@ from text_processing import (
     is_recordable_sentence,
     is_review_candidate,
     is_sentence_complete,
+    words_to_text,
 )
 
 
@@ -40,6 +41,12 @@ class TranscriptQualityFilterTests(unittest.TestCase):
     def test_keeps_short_complete_acknowledgements(self):
         self.assertTrue(is_recordable_sentence("Thanks."))
 
+    def test_keeps_complete_sentences_ending_with_common_function_words(self):
+        self.assertTrue(is_recordable_sentence("Let me do this."))
+        self.assertTrue(is_recordable_sentence("I agree with you."))
+        self.assertTrue(is_recordable_sentence("We need to fix it."))
+        self.assertTrue(is_recordable_sentence("We are working on that."))
+
     def test_only_marks_short_unpunctuated_non_acknowledgements_for_review(self):
         self.assertTrue(is_review_candidate("Maybe later"))
         self.assertFalse(is_review_candidate("Thank you."))
@@ -65,6 +72,64 @@ class TranscriptQualityFilterTests(unittest.TestCase):
 
     def test_accepts_sentence_with_positive_audio_span(self):
         self.assertTrue(is_sentence_complete([TimedWord(1, 1.2, "Thanks." )]))
+
+    def test_submission_watermark_only_moves_for_retained_or_rejected_segments(self):
+        from text_processing import segment_should_advance_committed_until
+
+        self.assertTrue(segment_should_advance_committed_until("saved"))
+        self.assertTrue(segment_should_advance_committed_until("duplicate"))
+        self.assertTrue(segment_should_advance_committed_until("rejected"))
+        self.assertFalse(segment_should_advance_committed_until("pending"))
+
+    def test_does_not_split_decimal_or_release_versions_as_sentences(self):
+        from text_processing import split_timed_sentences
+
+        words = [
+            TimedWord(i * 0.1, i * 0.1 + 0.08, text)
+            for i, text in enumerate(["We", "use", "26.", "1", "as", "a", "base."])
+        ]
+        completed, remainder = split_timed_sentences(words)
+
+        self.assertEqual([words_to_text(sentence) for sentence in completed], ["We use 26. 1 as a base."])
+        self.assertEqual(remainder, [])
+
+    def test_forced_window_boundary_does_not_trust_whisper_terminal_punctuation(self):
+        from text_processing import split_timed_sentences
+
+        words = [
+            TimedWord(0.0, 0.2, "We"),
+            TimedWord(0.2, 0.4, "need"),
+            TimedWord(0.4, 0.7, "context."),
+        ]
+
+        completed, remainder = split_timed_sentences(words, terminal_is_boundary=False)
+
+        self.assertEqual(completed, [])
+        self.assertEqual(remainder, words)
+
+    def test_mid_utterance_terminal_punctuation_remains_a_sentence_boundary(self):
+        from text_processing import split_timed_sentences
+
+        words = [
+            TimedWord(0.0, 0.2, "First."),
+            TimedWord(0.4, 0.6, "Second."),
+        ]
+
+        completed, remainder = split_timed_sentences(words, terminal_is_boundary=False)
+
+        self.assertEqual([words_to_text(item) for item in completed], ["First."])
+        self.assertEqual([word.text for word in remainder], ["Second."])
+
+    def test_adjacent_window_boundary_dedup_removes_single_repeated_word(self):
+        from text_processing import remove_sentence_overlap_words
+
+        previous = [TimedWord(0.0, 0.3, "control")]
+        current = [TimedWord(0.2, 0.4, "control"), TimedWord(0.4, 0.6, "again.")]
+
+        self.assertEqual(
+            [word.text for word in remove_sentence_overlap_words(previous, current, min_overlap=1)],
+            ["again."],
+        )
 
 if __name__ == "__main__":
     unittest.main()

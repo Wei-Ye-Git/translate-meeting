@@ -219,30 +219,38 @@ class TerminologyTests(unittest.TestCase):
             "请快速回复。",
         )
 
-    def test_company_glossary_normalizes_product_and_asr_variants(self):
+    def test_product_glossary_normalizes_names_and_asr_variants(self):
         terms = Terminology({
-            "RIB Software": {
-                "target": "RIB Software",
-                "asr_variants": ["R. B. Software"],
+            "AcmeSuite": {
+                "target": "AcmeSuite",
+                "asr_variants": ["A. C. M. E. Suite"],
             },
-            "RIB 4.0": {
-                "target": "RIB 4.0",
-                "asr_variants": ["RIB 4 point 0"],
+            "AcmeSuite 4.0": {
+                "target": "AcmeSuite 4.0",
+                "asr_variants": ["AcmeSuite 4 point 0"],
             },
-            "iTWO": {"target": "iTWO", "asr_variants": ["I two"]},
-            "RIB": {
-                "target": "RIB",
-                "asr_variants": ["RID"],
-                "context_terms": ["SAA"],
+            "ProductX": {"target": "ProductX", "asr_variants": ["Product X"]},
+            "Acme": {
+                "target": "Acme",
+                "asr_variants": ["ACME"],
+                "context_terms": ["software"],
             },
         })
 
         self.assertEqual(
-            terms.normalize_source("R. B. Software develops RIB 4 point 0 and I two."),
-            "RIB Software develops RIB 4.0 and iTWO.",
+            terms.normalize_source(
+                "A. C. M. E. Suite includes AcmeSuite 4 point 0 and Product X."
+            ),
+            "AcmeSuite includes AcmeSuite 4.0 and ProductX.",
         )
-        self.assertEqual(terms.normalize_source("RIB sold SAA, not RID."), "RIB sold SAA, not RIB.")
-        self.assertEqual(terms.normalize_source("Please get rid of this old draft."), "Please get rid of this old draft.")
+        self.assertEqual(
+            terms.normalize_source("ACME product line is ready."),
+            "Acme product line is ready.",
+        )
+        self.assertEqual(
+            terms.normalize_source("Please open the old draft."),
+            "Please open the old draft.",
+        )
 
     def test_asr_prompt_does_not_inject_unspoken_core_terms(self):
         terms = Terminology({

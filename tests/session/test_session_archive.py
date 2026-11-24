@@ -17,9 +17,9 @@ from session_archive import AudioRecorder, create_session_directory
 class SessionArchiveTests(unittest.TestCase):
     def test_creates_directory_named_with_session_start_time(self):
         with tempfile.TemporaryDirectory() as root:
-            path = create_session_directory(root, "20261010_093015")
+            path = create_session_directory(root, "20000101_000000")
 
-            self.assertEqual(os.path.basename(path), "meeting_20261010_093015")
+            self.assertEqual(os.path.basename(path), "meeting_20000101_000000")
             self.assertTrue(os.path.isdir(path))
 
     def test_writes_audio_chunks_as_mono_pcm16_wav(self):

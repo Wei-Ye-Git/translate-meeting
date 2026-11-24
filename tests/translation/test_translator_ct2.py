@@ -97,7 +97,12 @@ class TranslatorCT2Tests(unittest.TestCase):
              patch("transformers.MarianTokenizer.from_pretrained"), \
              patch("transformers.MarianMTModel.from_pretrained"):
             mock_cls.return_value = MagicMock()
-            Translator(model_path="models/opus_mt_en_zh_ct2", intra_threads=2, inter_threads=1)
+            with patch("os.path.isfile", return_value=True):
+                Translator(
+                    model_path="models/opus_mt_en_zh_ct2",
+                    intra_threads=2,
+                    inter_threads=1,
+                )
             mock_cls.assert_called_once()
             _, kwargs = mock_cls.call_args
             self.assertEqual(kwargs.get("intra_threads"), 2)

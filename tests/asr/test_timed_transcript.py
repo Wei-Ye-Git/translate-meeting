@@ -245,8 +245,8 @@ class TimedTranscriptTests(unittest.TestCase):
     def test_changed_correction_requires_material_confidence_gain(self):
         self.assertFalse(
             correction_is_confident(
-                "RIB sold the SAA business.",
-                "RIB sold the SAA distance.",
+                "The team reviewed the business.",
+                "The team reviewed the distance.",
                 [0.80] * 6,
                 [0.85] * 6,
             )
@@ -255,8 +255,8 @@ class TimedTranscriptTests(unittest.TestCase):
     def test_changed_word_requires_its_own_confidence_support(self):
         self.assertFalse(
             correction_is_confident(
-                "RIB sold the SAA business.",
-                "RIB sold the SAA distance.",
+                "The team reviewed the business.",
+                "The team reviewed the distance.",
                 [0.99, 0.99, 0.99, 0.99, 0.99, 0.95],
                 [0.99, 0.99, 0.99, 0.99, 0.99, 0.72],
             )

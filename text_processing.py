@@ -2,8 +2,14 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
+from i18n import data
 
-SENTENCE_END = re.compile(r"(.+?[.!?。！？](?:[\"'”’)]*)?)(?:\s+|$)", re.DOTALL)
+_CJK_SENTENCE_END = re.escape(data("translation.chinese_sentence_end_punctuation"))
+SENTENCE_END = re.compile(
+    rf"(.+?[.!?{_CJK_SENTENCE_END}](?:[\"'”’)]*)?)(?:\s+|$)", re.DOTALL
+)
+SENTENCE_END_PATTERN = rf"[.!?{_CJK_SENTENCE_END}]"
+SENTENCE_END_WITH_QUOTES_PATTERN = rf"{SENTENCE_END_PATTERN}[\"'”’)]*"
 
 
 @dataclass(frozen=True)
@@ -59,7 +65,7 @@ def is_sentence_complete(words, min_words=7):
     if cleaned in ACKNOWLEDGEMENTS or any(cleaned.startswith(ack + " ") for ack in {"thank you", "good morning", "good afternoon"}):
         return True
     word_count = len(re.findall(r"[A-Za-z0-9']+", text))
-    has_end_punct = re.search(r"[.!?。！？]$", text) is not None
+    has_end_punct = re.search(rf"{SENTENCE_END_PATTERN}$", text) is not None
     if has_end_punct and word_count >= min_words:
         return True
     if word_count >= 14:
@@ -72,7 +78,7 @@ def is_likely_incomplete(words):
     if not words:
         return True
     text = words[-1].text.strip().lower()
-    if re.search(r"[.!?。！？][\"'”’)]*$", text):
+    if re.search(SENTENCE_END_WITH_QUOTES_PATTERN + r"$", text):
         return False
     text = re.sub(r"[^a-z0-9']+$", "", text)
     return text in INCOMPLETE_ENDINGS
@@ -149,6 +155,21 @@ def correction_is_usable(original, corrected):
     # A delayed pass must not replace a complete transcript with a shorter
     # fragment when its time window missed a boundary word.
     minimum_words = len(original_words)
+    if len(corrected_words) == len(original_words) - 1:
+        removable_asr_words = {"uh", "um", "er", "erm"}
+        operations = SequenceMatcher(
+            None,
+            [word.lower() for word in original_words],
+            [word.lower() for word in corrected_words],
+        ).get_opcodes()
+        deleted = [
+            word.lower()
+            for operation, start, end, _, _ in operations
+            if operation == "delete"
+            for word in original_words[start:end]
+        ]
+        if deleted and all(word in removable_asr_words for word in deleted):
+            minimum_words -= 1
     minimum_chars = max(1, int(len(original.strip()) * 0.75))
     return len(corrected_words) >= minimum_words and len(corrected.strip()) >= minimum_chars
 
@@ -180,7 +201,7 @@ def correction_is_confident(original, corrected, original_confidences, corrected
     original_text = re.sub(r"[^\w']+", " ", original).strip().lower()
     corrected_text = re.sub(r"[^\w']+", " ", corrected).strip().lower()
     if original_text == corrected_text:
-        return True
+        return False
     original_scores = [score for score in original_confidences if score is not None]
     corrected_scores = [score for score in corrected_confidences if score is not None]
     if not original_scores or not corrected_scores:
@@ -337,6 +358,15 @@ def trim_trailing_silence_chunks(chunks, silence_count):
     return chunks[:-silence_count]
 
 
+def segment_should_advance_committed_until(disposition):
+    """Return whether an audio segment has a terminal disposition.
+
+    Pending segments keep the watermark unchanged so later decoding can
+    reconsider their tail instead of treating it as consumed history.
+    """
+    return disposition in {"saved", "duplicate", "rejected"}
+
+
 def filter_uncommitted_words(words, committed_until):
     return [word for word in words if word.end > committed_until]
 
@@ -364,13 +394,24 @@ def remove_chunk_overlap_words(previous, current):
     return current
 
 
-def split_timed_sentences(words):
+def split_timed_sentences(words, *, terminal_is_boundary=True):
     sentences = []
     remaining = []
     sentence = []
     for i, word in enumerate(words):
         sentence.append(word)
-        if re.search(r"[.!?。！？][\"'”’)]*$", word.text.strip()):
+        ends_sentence = bool(
+            re.search(SENTENCE_END_WITH_QUOTES_PATTERN + r"$", word.text.strip())
+        )
+        if not terminal_is_boundary and i == len(words) - 1:
+            ends_sentence = False
+        if ends_sentence and i + 1 < len(words):
+            next_text = words[i + 1].text.strip()
+            if re.search(
+                rf"\d+{SENTENCE_END_PATTERN}$", word.text.strip()
+            ) and re.match(r"^\d", next_text):
+                ends_sentence = False
+        if ends_sentence:
             sentences.append(sentence)
             sentence = []
         elif i + 1 < len(words) and (words[i + 1].start - word.end >= 0.85) and len(sentence) >= 3:
@@ -427,6 +468,8 @@ def is_recordable_sentence(text, allow_single_word=False):
         return True
     if len(words) < 2:
         return False
+    if re.search(SENTENCE_END_WITH_QUOTES_PATTERN + r"$", cleaned):
+        return True
     return not is_likely_incomplete([TimedWord(0, 1, words[-1])])
 
 
@@ -435,7 +478,7 @@ def is_review_candidate(text):
     normalized = re.sub(r"[^\w']+", " ", cleaned).strip().lower()
     if not cleaned or normalized in ACKNOWLEDGEMENTS:
         return False
-    if re.search(r"[.!?。！？]$", cleaned):
+    if re.search(rf"{SENTENCE_END_PATTERN}$", cleaned):
         return False
     return len(re.findall(r"[A-Za-z0-9']+", cleaned)) <= 4
 

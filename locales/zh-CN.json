@@ -46,6 +46,7 @@
     "status.worker_failed": "{worker}线程异常：{error}",
     "status.translation_failed": "第 {index} 句翻译失败，英文记录已保留：{error}",
     "status.correction_failed": "第 {index} 句延迟纠错失败，保留原转写：{error}",
+    "worker.copilot": "Copilot 实时字幕增强",
     "status.translation_warning": "第 {index} 句翻译质量检查提示：{issues}",
     "status.translation_retry_failed": "第 {index} 句增强翻译重试失败：{error}",
     "status.translation_unresolved": "第 {index} 句增强翻译后仍有质量告警，已标记待复核：{issues}",
@@ -90,6 +91,10 @@
   "data": {
     "translation.chinese_characters": "\\u4e00-\\u9fff",
     "translation.chinese_punctuation": "，。！？",
-    "translation.negation_markers": ["不", "没", "無", "无", "未", "非", "别", "沒有", "没有"]
+    "translation.chinese_sentence_end_punctuation": "。！？",
+    "translation.segment_join_punctuation": "，。！？；：,!?;:",
+    "translation.segment_join_separator": "，",
+    "translation.negation_markers": ["不", "没", "無", "无", "未", "非", "别", "沒有", "没有"],
+    "translation.contrast_markers": ["但是", "但", "然而", "不过", "虽然", "除非", "除了", "而不是", "与其", "不如", "仅", "至少", "至多", "只有", "只", "唯一", "却"]
   }
 }

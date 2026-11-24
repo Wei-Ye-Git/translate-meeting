@@ -12,6 +12,9 @@ docs/
 tool/
 prompts/
 agents/
+/.opencode/
+/local_ai/
+/report_templates/
 .agents/
 
 # Keep generated session data out of the repository even if paths change
@@ -22,6 +25,8 @@ agents/
 *.log
 *.zip
 terminology.json
+/glossaries/company-rib.json
+/locales/meeting-candidate-zh-CN.json
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

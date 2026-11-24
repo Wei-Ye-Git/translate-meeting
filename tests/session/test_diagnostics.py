@@ -49,6 +49,33 @@ class SessionDiagnosticsTests(unittest.TestCase):
         self.assertEqual([event["event"] for event in events], ["audio_gap", "warning_summary"])
         self.assertEqual(events[0]["seconds"], 0.5)
         self.assertEqual(events[1]["count"], 2)
+        self.assertEqual([event["event_sequence"] for event in events], [1, 2])
+        self.assertEqual(events[0]["session_id"], events[1]["session_id"])
+        self.assertTrue(all(event["elapsed_seconds"] >= 0 for event in events))
+
+    def test_quality_issue_events_keep_audio_time_and_transcript_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "diagnostics.jsonl")
+            diagnostics = SessionDiagnostics(path)
+
+            diagnostics.record_quality_issues(
+                "asr_quality",
+                ["possible_fast_speech", "low_confidence_words"],
+                start=4.2,
+                end=6.1,
+                text="Review the deployment plan carefully.",
+                metrics={"words_per_second": 5.2},
+            )
+
+            with open(path, encoding="utf-8") as source:
+                events = [json.loads(line) for line in source]
+
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0]["event"], "asr_quality")
+        self.assertEqual(events[0]["issue"], "possible_fast_speech")
+        self.assertEqual(events[0]["start"], 4.2)
+        self.assertEqual(events[0]["text"], "Review the deployment plan carefully.")
+        self.assertEqual(events[0]["metrics"]["words_per_second"], 5.2)
 
     def test_diagnostics_sink_disables_itself_after_write_error(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -70,6 +97,7 @@ class SessionDiagnosticsTests(unittest.TestCase):
         self.assertEqual(warnings_seen[0][-1], 2)
         self.assertIn("first_observed_at", warnings_seen[0][-2])
         self.assertIn("last_observed_at", warnings_seen[0][-2])
+        self.assertEqual(recorder.summary_counts()["RuntimeWarning:data discontinuity"], 2)
 
     def test_warning_recorder_does_not_mutate_process_global_warning_configuration(self):
         original_handler = warnings.showwarning

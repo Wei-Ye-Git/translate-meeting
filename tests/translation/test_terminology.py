@@ -3,6 +3,7 @@ import unittest
 
 import json
 import os
+import os
 import tempfile
 
 from terminology import Terminology
@@ -166,6 +167,24 @@ class TerminologyTests(unittest.TestCase):
             terms.normalize_source("Graphana dashboard and paw point slides."),
             "Grafana dashboard and PowerPoint slides.",
         )
+
+    def test_reference_report_terms_are_available_in_general_glossary(self):
+        terms = Terminology.from_file(
+            os.path.join(os.path.dirname(__file__), "..", "..", "glossaries", "general.json")
+        )
+
+        self.assertEqual(
+            terms.apply("We will use plan mode and check the context window.", "我们使用规划模式并检查上下文范围。"),
+            "我们使用计划模式并检查上下文窗口。",
+        )
+
+    def test_common_unit_testing_terms_are_available_asr_hotwords(self):
+        terms = Terminology.from_file(
+            os.path.join(os.path.dirname(__file__), "..", "..", "glossaries", "general.json")
+        )
+        always = terms.asr_prompt("", include_always=True)
+        for term in ("xUnit", "NUnit", "C#", "assert", "test fixture"):
+            self.assertIn(term, always)
 
     def test_ai_meeting_terms_normalize_common_translation_errors(self):
         terms = Terminology({

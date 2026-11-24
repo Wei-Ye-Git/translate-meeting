@@ -134,6 +134,14 @@ class TimedTranscriptTests(unittest.TestCase):
             )
         )
 
+    def test_correction_can_drop_one_extraneous_asr_word(self):
+        self.assertTrue(
+            correction_is_usable(
+                "We can um write high quality unit tests together today.",
+                "We can write high quality unit tests together today.",
+            )
+        )
+
     def test_short_complete_correction_remains_usable(self):
         self.assertTrue(correction_is_usable("I see", "I see"))
 
@@ -174,7 +182,7 @@ class TimedTranscriptTests(unittest.TestCase):
         )
 
     def test_confidence_gate_allows_transcript_when_wording_is_unchanged(self):
-        self.assertTrue(
+        self.assertFalse(
             correction_is_confident(
                 "We use AI every day.",
                 "we use AI every day.",
@@ -239,6 +247,14 @@ class TimedTranscriptTests(unittest.TestCase):
             correction_is_bounded(
                 "They know the business.",
                 "They really know the business.",
+            )
+        )
+
+    def test_confidence_gate_ignores_case_and_punctuation_only_changes(self):
+        self.assertFalse(
+            correction_is_confident(
+                "We want to write tests.", "we want to write tests",
+                [0.8] * 5, [0.8] * 5,
             )
         )
 

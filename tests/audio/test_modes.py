@@ -6,11 +6,25 @@ import threading
 
 import numpy as np
 
-from audio_capture import AudioChunk, enqueue_audio_chunk, queued_audio_seconds
+from audio_capture import (
+    AudioChunk,
+    audio_chunks_duration,
+    enqueue_audio_chunk,
+    queued_audio_seconds,
+)
 from config import Config
 
 
 class ModeTests(unittest.TestCase):
+    def test_audio_window_duration_uses_frame_timeline(self):
+        chunks = [
+            AudioChunk(0, np.zeros(8000, dtype=np.float32)),
+            AudioChunk(8000, np.zeros(8000, dtype=np.float32)),
+        ]
+
+        self.assertEqual(audio_chunks_duration(chunks, 16000), 1.0)
+        self.assertEqual(audio_chunks_duration([], 16000), 0.0)
+
     def test_complete_mode_keeps_all_audio_chunks(self):
         config = Config(mode="complete")
         chunks = []
@@ -62,9 +76,17 @@ class ModeTests(unittest.TestCase):
         low_latency = Config(mode="low_latency")
 
         self.assertEqual(complete.asr_preview_interval_seconds, 1.5)
-        self.assertEqual(complete.asr_correction_beam_size, 2)
+        self.assertEqual(complete.asr_correction_beam_size, 4)
         self.assertEqual(low_latency.asr_correction_beam_size, 1)
         self.assertEqual(low_latency.asr_preview_interval_seconds, 0.8)
+
+    def test_complete_mode_uses_stronger_delayed_correction_than_preview(self):
+        config = Config(mode="complete")
+
+        self.assertGreaterEqual(config.asr_correction_beam_size, config.asr_beam_size)
+
+    def test_complete_mode_keeps_history_translation_quality_enabled(self):
+        self.assertTrue(Config(mode="complete").history_translation_quality)
 
     def test_backlog_controls_are_bounded_and_context_is_lightweight(self):
         config = Config()
@@ -106,6 +128,22 @@ class ModeTests(unittest.TestCase):
         self.assertEqual(retained.start_frame, 8)
         self.assertTrue(retained.gap_before)
 
+    def test_low_latency_drop_reports_exact_dropped_chunk_and_frames(self):
+        config = Config(mode="low_latency", low_latency_queue_chunks=1)
+        audio_queue = queue.Queue(maxsize=1)
+        old_chunk = AudioChunk(0, np.ones(8, dtype=np.float32))
+        audio_queue.put(old_chunk)
+        dropped = []
+        stats = {}
+
+        enqueue_audio_chunk(
+            audio_queue, AudioChunk(8, np.ones(8, dtype=np.float32)), config,
+            drop_callback=dropped.append, capture_stats=stats,
+        )
+
+        self.assertEqual(dropped, [old_chunk])
+        self.assertEqual(stats, {"dropped_chunks": 1, "dropped_frames": 8})
+
     def test_gap_marker_is_attached_to_the_first_retained_chunk(self):
         config = Config(mode="low_latency", low_latency_queue_chunks=2)
         audio_queue = queue.Queue(maxsize=2)
@@ -120,7 +158,7 @@ class ModeTests(unittest.TestCase):
         self.assertEqual(first_retained.start_frame, 8)
         self.assertTrue(first_retained.gap_before)
 
-    def test_complete_mode_stops_waiting_for_queue_space_after_consumer_finishes(self):
+    def test_complete_mode_reports_chunk_dropped_after_consumer_finishes(self):
         config = Config(mode="complete")
         audio_queue = queue.Queue(maxsize=1)
         audio_queue.put(AudioChunk(0, np.ones(8, dtype=np.float32)))
@@ -129,16 +167,37 @@ class ModeTests(unittest.TestCase):
         consumer_done_event = threading.Event()
         consumer_done_event.set()
 
+        gaps = []
         dropped = enqueue_audio_chunk(
             audio_queue,
             AudioChunk(8, np.ones(8, dtype=np.float32)),
             config,
             stop_event=stop_event,
             consumer_done_event=consumer_done_event,
+            gap_callback=gaps.append,
         )
 
-        self.assertFalse(dropped)
+        self.assertTrue(dropped)
+        self.assertEqual(gaps, [8])
         self.assertEqual(audio_queue.qsize(), 1)
+
+    def test_complete_mode_counts_a_dropped_chunk_once(self):
+        config = Config(mode="complete")
+        audio_queue = queue.Queue(maxsize=1)
+        audio_queue.put(AudioChunk(0, np.ones(8, dtype=np.float32)))
+        stop_event = threading.Event()
+        stop_event.set()
+        consumer_done_event = threading.Event()
+        consumer_done_event.set()
+        stats = {}
+
+        enqueue_audio_chunk(
+            audio_queue, AudioChunk(8, np.ones(8, dtype=np.float32)), config,
+            stop_event=stop_event, consumer_done_event=consumer_done_event,
+            capture_stats=stats,
+        )
+
+        self.assertEqual(stats, {"dropped_chunks": 1, "dropped_frames": 8})
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import queue
 import unittest
 
 from translation_queue import (
+    PendingHistoryTranslations,
     is_live_translation_current,
     publish_live_translation,
     reset_live_translation,
@@ -12,6 +13,20 @@ from translation_queue import (
 
 
 class TranslationQueueTests(unittest.TestCase):
+    def test_committed_records_survive_backlog_and_pending_revisions_coalesce(self):
+        pending = PendingHistoryTranslations()
+        for index in range(100):
+            pending.add(index)
+        pending.add(0)
+        pending.add(50)
+
+        index, _ = pending.take()
+        self.assertEqual(index, 0)
+        pending.add(0)  # A newer version arrives while the first is being translated.
+
+        self.assertEqual([pending.take()[0] for _ in range(100)], list(range(1, 100)) + [0])
+        self.assertIsNone(pending.take())
+
     def test_prefers_newest_pending_translation(self):
         pending = queue.Queue()
         pending.put((1, "old stable text"))

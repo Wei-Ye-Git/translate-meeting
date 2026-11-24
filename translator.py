@@ -46,6 +46,8 @@ def translation_quality_issues(source, translated):
     latin_words = re.findall(r"[A-Za-z]{2,}", translated)
     if len(source_words) >= 4 and not chinese_chars and len(latin_words) >= len(source_words) // 2:
         issues.append("mostly_untranslated")
+    elif len(source_words) >= 4 and len(latin_words) > max(3, len(source_words) // 2):
+        issues.append("mixed_language_output")
     translated_units = len(re.findall(f"[{chinese_range}]|[A-Za-z0-9]+", translated))
     chinese_chars = len(re.findall(f"[{chinese_range}]", translated))
     source_units = len(source_words) + len(source_numbers)
@@ -75,6 +77,17 @@ def translation_quality_issues(source, translated):
         )
         if not negation_pattern or not re.search(negation_pattern, translated):
             issues.append("possible_missing_negation")
+    source_contrasts = re.findall(
+        r"\b(?:but|however|although|unless|except|instead|only|at least|at most)\b",
+        source,
+        re.IGNORECASE,
+    )
+    target_contrasts = data("translation.contrast_markers", [])
+    lowered_translated = translated.lower()
+    if source_contrasts and target_contrasts and not any(
+        marker.lower() in lowered_translated for marker in target_contrasts
+    ):
+        issues.append("possible_missing_contrast_or_condition")
     return issues
 
 
@@ -258,10 +271,12 @@ class Translator:
     @staticmethod
     def normalize_output(text):
         result = re.sub(r"\s+", " ", text.strip())
-        punctuation = re.escape(data("translation.chinese_punctuation", "，。！？"))
-        result = re.sub(rf"([{punctuation}])\1+", r"\1", result)
-        result = re.sub(rf"\s+([{punctuation}])", r"\1", result)
-        result = re.sub(rf"([{punctuation}])([A-Za-z])", r"\1 \2", result)
+        punctuation = data("translation.chinese_punctuation", "")
+        if punctuation:
+            punctuation = re.escape(punctuation)
+            result = re.sub(rf"([{punctuation}])\1+", r"\1", result)
+            result = re.sub(rf"\s+([{punctuation}])", r"\1", result)
+            result = re.sub(rf"([{punctuation}])([A-Za-z])", r"\1 \2", result)
         return result.strip()
 
     def _terminology_snapshot(self):
@@ -511,11 +526,7 @@ class Translator:
                 source = "\n".join(texts)
                 if self._token_count(source) <= 384:
                     translated = self._generate_context(source)
-                    parts = [
-                        part.strip()
-                        for part in re.findall(r".+?[。！？!?](?:\s*|$)|.+$", translated)
-                        if part.strip()
-                    ]
+                    parts = self._split_context_translation(translated)
                     if len(parts) == len(texts):
                         results = []
                         for text, part in zip(texts, parts):
@@ -532,10 +543,7 @@ class Translator:
             return self.translate_batch(texts, quality=True)
         translated = self._generate_context(source)
         self.last_latency_seconds = time.monotonic() - started
-        parts = [
-            part.strip() for part in re.findall(r".+?[。！？!?](?:\s*|$)|.+$", translated)
-            if part.strip()
-        ]
+        parts = self._split_context_translation(translated)
         if can_use_context_translation(texts, parts):
             results = [
                 self._apply_terms(text, self.normalize_output(part), terminology)
@@ -544,6 +552,19 @@ class Translator:
             if self._context_results_usable(texts, results):
                 return results
         return self.translate_batch(texts, quality=True)
+
+    @staticmethod
+    def _split_context_translation(translated):
+        """Split model output on line/sentence boundaries while retaining order."""
+        sentence_terminators = data("translation.chinese_sentence_end_punctuation", "")
+        punctuation = re.escape(sentence_terminators + "!?")
+        parts = [
+            part.strip()
+            for line in translated.splitlines()
+            for part in re.findall(rf".+?[{punctuation}](?:\s*|$)|.+$", line)
+            if part.strip()
+        ]
+        return parts
 
     def _context_results_usable(self, texts, translated_parts):
         if not can_use_context_translation(texts, translated_parts):

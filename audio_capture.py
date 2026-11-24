@@ -22,6 +22,7 @@ class AudioWarningRecorder:
     def __init__(self, warning_callback):
         self.warning_callback = warning_callback
         self.counts = {}
+        self.total_counts = {}
         self.details = {}
         self.observed_ranges = {}
         self._lock = threading.Lock()
@@ -32,6 +33,7 @@ class AudioWarningRecorder:
         observed_monotonic = time.monotonic()
         with self._lock:
             self.counts[key] = self.counts.get(key, 0) + 1
+            self.total_counts[key] = self.total_counts.get(key, 0) + 1
             self.details[key] = (category.__name__, str(message), filename, lineno)
             if key not in self.observed_ranges:
                 self.observed_ranges[key] = {
@@ -58,6 +60,14 @@ class AudioWarningRecorder:
                 category, message, filename, lineno, observed_range, count
             )
 
+    def summary_counts(self):
+        """Return warning totals for the session summary without flushing."""
+        with self._lock:
+            return {
+                f"{category}:{message}": count
+                for (category, message, _, _), count in self.total_counts.items()
+            }
+
 
 def enqueue_audio_chunk(
     out_queue,
@@ -66,26 +76,43 @@ def enqueue_audio_chunk(
     stop_event=None,
     gap_callback=None,
     consumer_done_event=None,
+    drop_callback=None,
+    capture_stats=None,
 ):
     if config.mode == "complete":
         if isinstance(out_queue, list):
             out_queue.append(chunk)
         else:
-                while True:
-                    try:
-                        out_queue.put(chunk, timeout=0.1)
-                        break
-                    except queue.Full:
-                        if (
-                            stop_event is not None
-                            and stop_event.is_set()
-                        ):
-                            if consumer_done_event is None or consumer_done_event.is_set():
-                                return False
+            while True:
+                try:
+                    out_queue.put(chunk, timeout=0.1)
+                    return False
+                except queue.Full:
+                    if (
+                        stop_event is not None
+                        and stop_event.is_set()
+                        and (
+                            consumer_done_event is None
+                            or consumer_done_event.is_set()
+                        )
+                    ):
+                        if drop_callback is not None:
+                            drop_callback(chunk)
+                        if capture_stats is not None:
+                            capture_stats["dropped_chunks"] = capture_stats.get("dropped_chunks", 0) + 1
+                            capture_stats["dropped_frames"] = capture_stats.get("dropped_frames", 0) + len(chunk.data)
+                        if gap_callback is not None:
+                            gap_callback(chunk.start_frame)
+                        return True
         return False
     if isinstance(out_queue, list):
         if len(out_queue) >= config.low_latency_queue_chunks:
             dropped = out_queue.pop(0)
+            if capture_stats is not None:
+                capture_stats["dropped_chunks"] = capture_stats.get("dropped_chunks", 0) + 1
+                capture_stats["dropped_frames"] = capture_stats.get("dropped_frames", 0) + len(dropped.data)
+            if drop_callback is not None:
+                drop_callback(dropped)
             chunk.gap_before = True
             if out_queue:
                 out_queue[0].gap_before = True
@@ -102,8 +129,14 @@ def enqueue_audio_chunk(
         dropped = None
         try:
             dropped = out_queue.get_nowait()
+            out_queue.task_done()
         except queue.Empty:
             pass
+        if dropped is not None and drop_callback is not None:
+            drop_callback(dropped)
+        if dropped is not None and capture_stats is not None:
+            capture_stats["dropped_chunks"] = capture_stats.get("dropped_chunks", 0) + 1
+            capture_stats["dropped_frames"] = capture_stats.get("dropped_frames", 0) + len(dropped.data)
         chunk.gap_before = True
         with out_queue.mutex:
             if out_queue.queue:
@@ -119,11 +152,19 @@ def queued_audio_seconds(out_queue, chunk_seconds):
     return size * chunk_seconds
 
 
+def audio_chunks_duration(chunks, samplerate):
+    """Return the timeline duration spanning an ordered chunk window."""
+    if not chunks or samplerate <= 0:
+        return 0.0
+    return max(0, chunks[-1].end_frame - chunks[0].start_frame) / samplerate
+
+
 @dataclass
 class AudioChunk:
     start_frame: int
     data: np.ndarray
     gap_before: bool = False
+    captured_at: float = 0.0
 
     @property
     def end_frame(self):
@@ -173,13 +214,15 @@ def pick_loopback_device(name: str = ""):
 def capture_loop(device, samplerate, chunk_frames, out_queue: queue.Queue,
                  stop_event: threading.Event, config, audio_sink=None,
                  gap_callback=None, diagnostic_callback=None, capture_stats=None,
-                 audio_timeline_sink=None, consumer_done_event=None,
-                 failure_callback=None):
+                  audio_timeline_sink=None, consumer_done_event=None,
+                  failure_callback=None, drop_callback=None,
+                  captured_chunk_callback=None):
     next_frame = 0
     current_device = device
     last_audio_time = time.monotonic()
     reconnect_attempt = 0
     outage_started_at = None
+    last_progress_reported_chunk = 0
     while not stop_event.is_set():
         try:
             with current_device.recorder(samplerate=samplerate) as input_recorder:
@@ -197,15 +240,46 @@ def capture_loop(device, samplerate, chunk_frames, out_queue: queue.Queue,
                         capture_stats["chunks"] += 1
                         capture_stats["frames"] += len(audio)
                         capture_stats["next_frame"] = next_frame + len(audio)
+                        if (
+                            diagnostic_callback is not None
+                            and capture_stats["chunks"] - last_progress_reported_chunk >= 120
+                        ):
+                            last_progress_reported_chunk = capture_stats["chunks"]
+                            diagnostic_callback(
+                                "audio_capture_progress",
+                                chunks=capture_stats["chunks"],
+                                captured_seconds=round(
+                                    capture_stats["frames"] / samplerate, 3
+                                ),
+                                chunk_seconds=round(len(audio) / samplerate, 3),
+                                queued_chunks=(
+                                    out_queue.qsize()
+                                    if hasattr(out_queue, "qsize") else len(out_queue)
+                                ),
+                                chunk_frames=len(audio),
+                                audio_rms=round(
+                                    float(np.sqrt(np.mean(np.square(audio)))), 6
+                                ) if len(audio) else 0.0,
+                                audio_peak=round(
+                                    float(np.max(np.abs(audio))), 6
+                                ) if len(audio) else 0.0,
+                            )
+                    chunk = AudioChunk(
+                        next_frame, audio, captured_at=time.monotonic()
+                    )
+                    if captured_chunk_callback is not None:
+                        captured_chunk_callback(chunk)
                     was_dropped = enqueue_audio_chunk(
                         out_queue,
-                        AudioChunk(next_frame, audio),
+                        chunk,
                         config,
                         stop_event,
                         gap_callback=gap_callback or (
                             lambda frame: print(t("log.audio_chunk_dropped", frame=frame))
                         ),
                         consumer_done_event=consumer_done_event,
+                        drop_callback=drop_callback,
+                        capture_stats=capture_stats,
                     )
                     next_frame += len(audio)
                     if was_dropped:
@@ -239,6 +313,14 @@ def capture_loop(device, samplerate, chunk_frames, out_queue: queue.Queue,
             if capture_stats is not None:
                 capture_stats["reconnects"] += 1
                 capture_stats["estimated_missing_frames"] += missing_frames
+                capture_stats["next_frame"] = next_frame
+                if missing_frames:
+                    capture_stats["timeline_gap_events"] = capture_stats.get(
+                        "timeline_gap_events", 0
+                    ) + 1
+                    capture_stats["timeline_gap_frames"] = capture_stats.get(
+                        "timeline_gap_frames", 0
+                    ) + missing_frames
             if missing_frames and audio_sink is not None:
                 write_silence = getattr(audio_sink, "write_silence", None)
                 if write_silence is not None:

@@ -72,6 +72,30 @@ class TranslationQualityTests(unittest.TestCase):
             translation_quality_issues("We will update the database tomorrow.", "明天。"),
         )
 
+    def test_detects_mixed_language_output(self):
+        issues = translation_quality_issues(
+            "We should review the deployment plan before release.",
+            "我们 should review the deployment plan 后再发布。",
+        )
+
+        self.assertIn("mixed_language_output", issues)
+
+    def test_detects_missing_condition_or_contrast_marker(self):
+        issues = translation_quality_issues(
+            "We can deploy it unless the validation fails.",
+            "验证失败时我们可以部署。",
+        )
+
+        self.assertIn("possible_missing_contrast_or_condition", issues)
+
+    def test_accepts_common_chinese_contrast_and_restriction_markers(self):
+        for translated in ("但这种行为需要停止。", "你只能使用这个。"):
+            with self.subTest(translated=translated):
+                self.assertNotIn(
+                    "possible_missing_contrast_or_condition",
+                    translation_quality_issues("But this behavior needs to stop.", translated),
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -74,6 +74,31 @@ class OverlayStressTests(unittest.TestCase):
         finally:
             overlay.close()
 
+    def test_batch_history_revision_redraws_once_and_preserves_scroll_position(self):
+        overlay = Overlay(font_size=14)
+        overlay.root.withdraw()
+        try:
+            overlay.append_history(0, "First old.", "第一句旧译。", metadata={"version": 1})
+            overlay.append_history(1, "Second old.", "第二句旧译。", metadata={"version": 1})
+            overlay.history_at_bottom = False
+            redraws = []
+            original_replace = overlay.replace_history
+            overlay.replace_history = lambda items: (redraws.append(list(items)), original_replace(items))[1]
+
+            changed = overlay.update_history_window([
+                {"record_id": 0, "english": "First revised.", "chinese": "第一句修订。",
+                 "version": 2, "metadata": {"version": 2, "corrected": True}},
+                {"record_id": 1, "english": "Second old.", "chinese": "第二句译文更新。",
+                 "version": 2, "metadata": {"version": 2}},
+            ])
+
+            self.assertTrue(changed)
+            self.assertEqual(len(redraws), 1)
+            self.assertEqual(overlay.history[0], ("First revised.", "第一句修订。"))
+            self.assertFalse(overlay.history_at_bottom)
+        finally:
+            overlay.close()
+
     def test_corrected_history_removes_stale_review_marker(self):
         overlay = Overlay(font_size=14)
         overlay.root.withdraw()
@@ -182,6 +207,27 @@ class OverlayStressTests(unittest.TestCase):
             overlay.mark_history_for_review(0)
             self.assertIn("[需要复核]", overlay.bilingual_text())
             self.assertIn("[需要复核]", overlay.history_text.get("1.0", "end"))
+        finally:
+            overlay.close()
+
+    def test_review_marker_is_rendered_for_new_and_revised_history(self):
+        overlay = Overlay(font_size=14)
+        overlay.root.withdraw()
+        try:
+            overlay.append_history(
+                0, "First transcript.", "第一句。",
+                metadata={"version": 1, "review": True},
+            )
+            self.assertIn("[需要复核]", overlay.history_text.get("1.0", "end"))
+
+            overlay.update_history_original(
+                0, "Revised transcript.",
+                metadata={"version": 2, "review": True, "corrected": True},
+                version=2,
+            )
+            rendered = overlay.history_text.get("1.0", "end")
+            self.assertIn("[需要复核]", rendered)
+            self.assertIn("[已修订] Revised transcript.", rendered)
         finally:
             overlay.close()
 

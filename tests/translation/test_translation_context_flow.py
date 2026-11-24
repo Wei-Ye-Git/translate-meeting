@@ -75,6 +75,19 @@ class TranslationContextFlowTests(unittest.TestCase):
 
         self.assertEqual(result, ["上一句。", "我们需要 3 台服务器。"])
 
+    def test_context_translation_preserves_model_newlines_as_sentence_boundaries(self):
+        translator = self.make_translator()
+        translator.tokenizer.decode = lambda output, skip_special_tokens=True: (
+            "我们讨论了部署计划。\n我们将部署 3 台服务器。"
+        )
+
+        result = translator.translate_context([
+            "We discussed the deployment plan.",
+            "We will deploy 3 servers.",
+        ])
+
+        self.assertEqual(result, ["我们讨论了部署计划。", "我们将部署 3 台服务器。"])
+
     def test_context_translation_uses_neighboring_sentences_for_disambiguation(self):
         translator = self.make_translator()
         translator.tokenizer.decode = lambda output, skip_special_tokens=True: (
